@@ -8,10 +8,12 @@ sample script can import the `src/` package:
 python -m pip install -e ".[dev]"
 python data/make_sample.py
 python -m signal_qaqc.pipeline data/signals.csv data/roads.csv --heads data/heads_delivered.csv
-python -m pytest -q
+pytest --cov=signal_qaqc --cov-report=term-missing --cov-fail-under=85
 ```
 
-`data/make_sample.py` uses seed 7 by default. Its six fictional road segments and
+The generator lives in the installed `signal_qaqc.sample` module;
+`data/make_sample.py` is a thin CLI wrapper. It uses seed 7 by default.
+Its six fictional road segments and
 seven selected crossings are translated to local coordinates near
 `(500000, 3300000)` in EPSG:26914. It generates 37 Signals, including four
 address-style beacons and five added duplicate candidates. It never reads real

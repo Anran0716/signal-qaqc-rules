@@ -1,7 +1,6 @@
 import json
 import subprocess
 import sys
-from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -9,10 +8,9 @@ from shapely.geometry import LineString
 
 from signal_qaqc.geo import to_lonlat
 from signal_qaqc.heads import HEAD_COLUMNS
-from signal_qaqc.pipeline import run
+from signal_qaqc.pipeline import main, run
 from signal_qaqc.report import ACTIONS, COLUMNS, SEVERITY_ORDER
-
-ROOT = Path(__file__).resolve().parents[1]
+from signal_qaqc.sample import make_sample, write_sample
 
 
 @pytest.fixture
@@ -154,8 +152,6 @@ def test_missing_or_duplicate_parent_identity_is_rejected(signals, gids):
 
 
 def test_sample_is_reproducible_and_has_the_requested_network():
-    from data.make_sample import make_sample
-
     first = make_sample()
     second = make_sample(seed=7)
     for a, b in zip(first, second, strict=True):
@@ -171,8 +167,6 @@ def test_sample_is_reproducible_and_has_the_requested_network():
 
 
 def test_sample_pipeline_detects_every_injected_problem():
-    from data.make_sample import make_sample
-
     signals, roads, delivered = make_sample()
     cleaned, heads, issues = run(signals, roads, delivered)
     rules_by_id = issues.groupby("record_id")["rule"].agg(set).to_dict()
@@ -228,15 +222,10 @@ def test_sample_pipeline_detects_every_injected_problem():
     assert len(cleaned) == 37
 
 
-def test_cli_writes_tables_and_preserves_the_id_high_water_mark(tmp_path):
-    from data.make_sample import write_sample
-
+def test_cli_writes_tables_and_preserves_the_id_high_water_mark(tmp_path, capsys):
     write_sample(tmp_path)
     output = tmp_path / "results"
     args = [
-        sys.executable,
-        "-m",
-        "signal_qaqc.pipeline",
         str(tmp_path / "signals.csv"),
         str(tmp_path / "roads.csv"),
         "--heads",
@@ -244,9 +233,8 @@ def test_cli_writes_tables_and_preserves_the_id_high_water_mark(tmp_path):
         "--output",
         str(output),
     ]
-    process = subprocess.run(args, cwd=ROOT, capture_output=True, text=True)
-    assert process.returncode == 0, process.stderr
-    assert "37 signals" in process.stdout
+    main(args)
+    assert "37 signals" in capsys.readouterr().out
     assert set(p.name for p in output.iterdir()) == {
         "signals_clean.csv",
         "heads_expected.csv",
@@ -265,15 +253,47 @@ def test_cli_writes_tables_and_preserves_the_id_high_water_mark(tmp_path):
     new_row["SignalID"] = ""
     new_row.to_csv(tmp_path / "next.csv", index=False)
     next_args = [
-        sys.executable,
-        "-m",
-        "signal_qaqc.pipeline",
         str(tmp_path / "next.csv"),
         str(tmp_path / "roads.csv"),
         "--output",
         str(output),
     ]
-    second = subprocess.run(next_args, cwd=ROOT, capture_output=True, text=True)
-    assert second.returncode == 0, second.stderr
+    main(next_args)
     result = pd.read_csv(output / "signals_clean.csv")
     assert result.loc[0, "SignalID"] == f"SIG-{state['last_number'] + 1:05d}"
+
+
+def test_pipeline_module_runs_from_outside_the_repository(tmp_path):
+    write_sample(tmp_path)
+
+    process = subprocess.run(
+        [sys.executable, "-m", "signal_qaqc.pipeline", "signals.csv", "roads.csv"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    )
+
+    assert process.returncode == 0, process.stderr
+    assert "37 signals" in process.stdout
+    assert (tmp_path / "output/signals_clean.csv").exists()
+
+
+def test_cli_rejects_corrupt_id_state_without_resetting_it(tmp_path, capsys):
+    write_sample(tmp_path)
+    state = tmp_path / "state.json"
+    state.write_text("not valid JSON", encoding="utf-8")
+
+    with pytest.raises(SystemExit) as error:
+        main(
+            [
+                str(tmp_path / "signals.csv"),
+                str(tmp_path / "roads.csv"),
+                "--id-state",
+                str(state),
+            ]
+        )
+
+    assert error.value.code == 2
+    assert "error:" in capsys.readouterr().err
+    assert state.read_text(encoding="utf-8") == "not valid JSON"
+    assert not (tmp_path / "output").exists()
