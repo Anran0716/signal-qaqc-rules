@@ -1,6 +1,8 @@
 """Normalize and classify Major @ Minor names under the project hierarchy.
 
 Loop routes rank below FM/RR and above local streets; see the README assumption.
+Names containing TURNAROUND follow normal intersection checks when a separator
+exists. Without a separator, they are classified as NOT_INTERSECTION.
 Only FIX_FORMAT and FIX_ORDER proposals are eligible for automatic renaming.
 """
 
@@ -20,7 +22,7 @@ ROUTE_RANK = {
 }
 LOCAL_RANK = 99
 _UNRANKED_STATE = {"SS", "PR", "PA"}
-_ROUTE_LIKE = re.compile(r"^([A-Z]{1,2})\s*-?\s*\d", re.IGNORECASE)
+_ROUTE_LIKE = re.compile(r"^([A-Z]{2})\s*-?\s*\d+(?![A-Z0-9])", re.IGNORECASE)
 _SEPARATORS = re.compile(r"\s*[@&]\s*|\s+(?:AT|AND)\s+", re.IGNORECASE)
 _NOT_IN_USE = re.compile(r"^\(\s*NOT\s+IN\s+USE\s*\)", re.IGNORECASE)
 _ADDRESS = re.compile(r"^\d+\s+\S")
@@ -40,6 +42,11 @@ _PREFIX_PATTERNS = [
     ("PA", r"PA"),
     ("CR", r"COUNTY\s+(?:ROAD|RD)|CR"),
 ]
+# Known routes with invalid suffixes still need review, e.g. US 90AB.
+_KNOWN_ROUTE_START = re.compile(
+    rf"^(?:{'|'.join(pattern for _, pattern in _PREFIX_PATTERNS)})\s*-?\s*\d",
+    re.IGNORECASE,
+)
 # A prefix must be followed by a number, so BULVERDE is never parsed as BU.
 # At most one suffix letter is allowed; reject a longer alphanumeric fragment.
 _ROUTE_MATCHERS = [
@@ -120,6 +127,8 @@ def parse_side(text: str) -> Road:
             problems.append(
                 f"Unrecognized or malformed route: {match.group(1).upper()} in {part}"
             )
+        elif _KNOWN_ROUTE_START.match(part):
+            problems.append(f"Malformed known route: {part}")
     if problems:
         return Road(normalized, reason="; ".join(problems))
     if not candidates:
@@ -129,7 +138,10 @@ def parse_side(text: str) -> Road:
 
 
 def check_intersection_name(location: str | None) -> NameCheck:
-    """Return one of six statuses, a reason, and a standardized name when safe."""
+    """Return one of six statuses, a reason, and a standardized name when safe.
+
+    TURNAROUND excludes a record only when no intersection separator is present.
+    """
     if not isinstance(location, str) or not location.strip():
         return NameCheck("REVIEW", "Location is blank or is not text")
     cleaned = " ".join(location.split())
@@ -139,9 +151,11 @@ def check_intersection_name(location: str | None) -> NameCheck:
         return NameCheck(
             "NOT_INTERSECTION", "Address-style location, not an intersection"
         )
-    if re.search(r"\bTURNAROUND\b", cleaned, re.IGNORECASE):
-        return NameCheck("NOT_INTERSECTION", "Turnaround, not an intersection")
     sides = _SEPARATORS.split(cleaned)
+    if len(sides) == 1 and re.search(r"\bTURNAROUND\b", cleaned, re.IGNORECASE):
+        return NameCheck(
+            "NOT_INTERSECTION", "Turnaround without an intersection separator"
+        )
     if len(sides) != 2 or any(not side.strip() for side in sides):
         return NameCheck(
             "REVIEW", "Expected exactly two non-empty sides separated by @, at, or &"

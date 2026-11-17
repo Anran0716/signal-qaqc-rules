@@ -63,10 +63,13 @@ def test_parse_side_uses_the_highest_ranked_alias_and_keeps_all_names(raw, route
     assert road.reason is None
 
 
-def test_parse_side_keeps_bulverde_as_a_local_road():
-    road = parse_side("BULVERDE RD")
+@pytest.mark.parametrize(
+    "name", ["BULVERDE RD", "E 6TH ST", "W 3rd St", "NE 6TH ST", "SW 13th St"]
+)
+def test_parse_side_keeps_directional_numbered_streets_and_bulverde_local(name):
+    road = parse_side(name)
 
-    assert road.text == "BULVERDE RD"
+    assert road.text == name
     assert road.route is None
     assert road.reason is None
 
@@ -89,6 +92,7 @@ def test_parse_side_records_ambiguous_or_empty_aliases_for_review(raw):
         ("1220 FM 471", "NOT_INTERSECTION", None),
         ("TURNAROUND", "NOT_INTERSECTION", None),
         ("UA 46 @ FM 471", "REVIEW", None),
+        ("UA 87 @ FM 100", "REVIEW", None),
         ("SH 46 FM 1560", "REVIEW", None),
         ("Main St @ US 90", "FIX_ORDER", "US 90 @ Main St"),
         ("SH 46 @ BULVERDE RD", "OK", "SH 46 @ BULVERDE RD"),
@@ -119,7 +123,7 @@ def test_parse_side_records_ambiguous_or_empty_aliases_for_review(raw):
         ("US 90AB @ FM 471", "REVIEW", None),
         ("SS 55 @ FM 471", "REVIEW", None),
         ("(NOT IN USE) SH 46 @ FM 471", "REVIEW", None),
-        ("IH 10 @ TURNAROUND", "NOT_INTERSECTION", None),
+        ("IH 10 @ TURNAROUND", "OK", "IH 10 @ TURNAROUND"),
         (
             "FM 2790 / SOMERSET RD @ FM 2790 / W DIXON RD",
             "OK",
@@ -133,6 +137,56 @@ def test_check_intersection_name_returns_six_distinct_statuses(raw, status, prop
     assert result.status == status
     assert result.proposed == proposed
     assert isinstance(result.reason, str) and result.reason
+
+
+@pytest.mark.parametrize(
+    ("raw", "status", "proposed"),
+    [
+        ("FM 100 @ W 3rd St", "OK", "FM 100 @ W 3rd St"),
+        ("FM 100 @ E 6TH ST", "OK", "FM 100 @ E 6TH ST"),
+        ("SL 200 @ NE 6TH ST", "OK", "SL 200 @ NE 6TH ST"),
+        ("LP 200 @ SW 13th St", "FIX_FORMAT", "SL 200 @ SW 13th St"),
+    ],
+)
+def test_directional_numbered_local_streets_are_not_unknown_routes(
+    raw, status, proposed
+):
+    result = check_intersection_name(raw)
+
+    assert result.status == status
+    assert result.proposed == proposed
+
+
+@pytest.mark.parametrize(
+    ("raw", "status", "proposed"),
+    [
+        (
+            "US 100 SB @ FICTIONAL VISTA TURNAROUND",
+            "OK",
+            "US 100 SB @ FICTIONAL VISTA TURNAROUND",
+        ),
+        (
+            "US 100 SB at FICTIONAL VISTA TURNAROUND",
+            "FIX_FORMAT",
+            "US 100 SB @ FICTIONAL VISTA TURNAROUND",
+        ),
+        (
+            "FICTIONAL VISTA TURNAROUND @ US 100 SB",
+            "FIX_ORDER",
+            "US 100 SB @ FICTIONAL VISTA TURNAROUND",
+        ),
+        ("FICTIONAL VISTA TURNAROUND", "NOT_INTERSECTION", None),
+        ("US 100 SB @ @ FICTIONAL VISTA TURNAROUND", "REVIEW", None),
+        ("TURNAROUND @", "REVIEW", None),
+    ],
+)
+def test_turnaround_names_follow_intersection_rules_when_a_separator_exists(
+    raw, status, proposed
+):
+    result = check_intersection_name(raw)
+
+    assert result.status == status
+    assert result.proposed == proposed
 
 
 @pytest.mark.parametrize(

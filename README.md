@@ -18,13 +18,17 @@ whitespace normalized. A route prefix must be followed by a number, so
 `BULVERDE RD` and `BUCKINGHAM VILLAGE ST` are never interpreted as Business US.
 Unknown prefixes and ambiguous names are reviewed without guessing a correction.
 
+Directional numbered streets such as `W 3rd St` remain local roads.
+Names containing `TURNAROUND` follow normal intersection checks when a separator
+is present; only unseparated turnaround labels are excluded as `NOT_INTERSECTION`.
+
 | Status | Meaning | Action |
 | --- | --- | --- |
 | `OK` | Order and format already match | None |
 | `FIX_FORMAT` | Correct order; spelling, spacing, or separator needs normalization | Apply proposal |
 | `FIX_ORDER` | Class or numeric route order is reversed | Apply proposal |
 | `LOCAL_ONLY` | Both sides are local streets | Hierarchy rule does not apply |
-| `NOT_INTERSECTION` | Address-style location or turnaround | Do not treat as an intersection |
+| `NOT_INTERSECTION` | Address-style location or unseparated turnaround | Do not treat as an intersection |
 | `REVIEW` | Unknown prefix, missing side/separator, or another ambiguity | Human review |
 
 `check_intersection_name` returns `status`, `reason`, and `proposed`.
