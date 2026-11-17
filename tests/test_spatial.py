@@ -8,6 +8,7 @@ from signal_qaqc.spatial import (
     AUTO_MAX_M,
     FLAG_MAX_M,
     _nearest_tier,
+    _side_keys,
     associate,
     build_road_index,
     classify_distance,
@@ -233,11 +234,55 @@ def test_two_known_parallel_roads_require_manual_review_without_v1_fallback(road
     assert result.method == "named_crossing"
 
 
-@pytest.mark.parametrize("name", ["IH 10 @ FM 999", "1220 FM 100", None])
-def test_unavailable_or_unparseable_named_roads_fall_back_to_v1(roads, name):
+@pytest.mark.parametrize(
+    "name",
+    [
+        "IH 10 @ FM 999",
+        "UA 100 @ FM 200",
+        "(NOT IN USE) IH 10 @ FM 1560",
+        "IH 10 @ FICTIONAL TURNAROUND",
+        None,
+    ],
+)
+def test_unverified_crossing_fallback_cannot_automatically_pass(roads, name):
     point = Point(500_100, 3_300_005)
 
-    assert associate(point, name, roads) == nearest_v1(point, roads)
+    original = nearest_v1(point, roads)
+    result = associate(point, name, roads)
+
+    assert original.tier == "auto"
+    assert original.method == "nearest_v1"
+    assert result.tier == "flag"
+    assert result.method == "fallback_v1"
+    assert result.road_id == original.road_id
+    assert result.distance_m == original.distance_m
+    assert result.second_distance_m == original.second_distance_m
+
+
+@pytest.mark.parametrize(("offset", "tier"), [(30.0, "flag"), (250.0, "manual")])
+def test_unverified_fallback_preserves_existing_flag_and_manual_tiers(
+    roads, offset, tier
+):
+    result = associate(Point(500_100, 3_300_000 + offset), "IH 10 @ FM 999", roads)
+
+    assert result.tier == tier
+    assert result.method == "fallback_v1"
+
+
+@pytest.mark.parametrize("name", ["1220 FM 100", "TURNAROUND"])
+@pytest.mark.parametrize(
+    ("offset", "tier"), [(5.0, "auto"), (30.0, "flag"), (250.0, "manual")]
+)
+def test_non_intersection_records_keep_the_direct_nearest_road_result(
+    roads, name, offset, tier
+):
+    point = Point(500_100, 3_300_000 + offset)
+
+    result = associate(point, name, roads)
+
+    assert result == nearest_v1(point, roads)
+    assert result.tier == tier
+    assert result.method == "nearest_v1"
 
 
 def test_associate_with_no_road_layer_is_manual():
@@ -245,6 +290,7 @@ def test_associate_with_no_road_layer_is_manual():
 
     assert result.tier == "manual"
     assert result.road_id is None
+    assert result.method == "fallback_v1"
 
 
 def test_alias_sides_use_their_ranked_route_for_lookup(roads):
@@ -254,6 +300,93 @@ def test_alias_sides_use_their_ranked_route_for_lookup(roads):
 
     assert result.tier == "auto"
     assert result.distance_m == pytest.approx(5.0)
+
+
+@pytest.mark.parametrize(
+    ("side", "keys"),
+    [
+        ("OAK RD / FM100", ["FM100", "OAKRD"]),
+        ("FM100 / FM 100 / OAK RD", ["FM100", "OAKRD"]),
+        ("LP 200 NORTH", ["SL200", "SL200NORTH"]),
+        ("LP 200 ACCESS RD", ["SL200", "SL200ACCESSRD"]),
+    ],
+)
+def test_side_candidates_keep_route_priority_aliases_and_distinct_qualifiers(
+    side, keys
+):
+    assert _side_keys(side) == keys
+
+
+@pytest.mark.parametrize("include_route", [True, False])
+def test_shared_route_uses_the_intersecting_local_aliases(include_route):
+    x, y = 500_000.0, 3_300_000.0
+    roads = {
+        "OAK RD": LineString([(x - 100, y), (x + 100, y)]),
+        "ELM RD": LineString([(x, y - 100), (x, y + 100)]),
+    }
+    if include_route:
+        roads["FM 100"] = LineString([(x, y + 500), (x + 100, y + 500)])
+
+    result = associate(
+        Point(x, y), "FM 100 / OAK RD @ FM 100 / ELM RD", build_road_index(roads)
+    )
+
+    assert result.tier == "auto"
+    assert result.distance_m == pytest.approx(0.0)
+    assert result.method == "named_crossing"
+
+
+@pytest.mark.parametrize("direction", ["NORTH", "SOUTH"])
+def test_shared_loop_route_tries_mainline_and_access_road_qualifiers(direction):
+    x, y = 500_000.0, 3_300_000.0
+    index = build_road_index(
+        {
+            "LP 200": LineString([(x, y + 500), (x + 100, y + 500)]),
+            f"LP 200 {direction}": LineString([(x, y - 100), (x, y + 100)]),
+            "LP 200 ACCESS RD": LineString([(x - 100, y), (x + 100, y)]),
+        }
+    )
+
+    result = associate(Point(x, y), f"LP 200 {direction} @ LP 200 ACCESS RD", index)
+
+    assert result.tier == "auto"
+    assert result.distance_m == pytest.approx(0.0)
+    assert result.method == "named_crossing"
+
+
+def test_all_alias_pairs_must_be_exhausted_before_returning_manual():
+    x, y = 500_000.0, 3_300_000.0
+    index = build_road_index(
+        {
+            "FM 100": LineString([(x - 100, y + 500), (x + 100, y + 500)]),
+            "OAK RD": LineString([(x - 100, y), (x + 100, y)]),
+            "ELM RD": LineString([(x - 100, y + 20), (x + 100, y + 20)]),
+        }
+    )
+
+    result = associate(Point(x, y), "FM 100 / OAK RD @ FM 100 / ELM RD", index)
+
+    assert result.tier == "manual"
+    assert result.method == "named_crossing"
+    assert result.distance_m == inf
+
+
+def test_first_intersecting_candidate_pair_wins_over_a_closer_lower_priority_pair():
+    x, y = 500_000.0, 3_300_000.0
+    index = build_road_index(
+        {
+            "IH 100": LineString([(x - 100, y), (x + 100, y)]),
+            "FM 200": LineString([(x + 30, y - 100), (x + 30, y + 100)]),
+            "OAK RD": LineString([(x, y - 100), (x, y + 100)]),
+            "ELM RD": LineString([(x - 100, y), (x + 100, y)]),
+        }
+    )
+
+    result = associate(Point(x, y), "IH 100 / OAK RD @ FM 200 / ELM RD", index)
+
+    assert result.distance_m == pytest.approx(30.0)
+    assert result.tier == "flag"
+    assert result.method == "named_crossing"
 
 
 def test_two_crossings_choose_the_actual_nearest_point_instead_of_the_centroid():

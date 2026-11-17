@@ -3,11 +3,15 @@
 All geometries use local EPSG:26914 meters. V1 retains its known ambiguity and
 wrong-crossing failures. Associate measures the nearest point on the named roads'
 actual intersection, including multiple crossings and overlapping line segments.
+Candidate pairs are tried in route/alias priority order, skipping identical keys.
+Unverified fallbacks are capped at flag and marked fallback_v1. NOT_INTERSECTION
+records use nearest_v1 directly because their location is defined along a road.
 Build the road index once with build_road_index before processing signal records.
 """
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from itertools import product
 from math import inf, isnan
 
 from shapely.geometry import LineString, MultiLineString, Point
@@ -30,7 +34,7 @@ class RoadMatch:
     """Candidate evidence; only auto permits association.
 
     road_id holds a road key for v1 or an intersection key for named_crossing.
-    method identifies which distance was measured, including a fallback to v1.
+    method is named_crossing, fallback_v1, or nearest_v1 for direct road checks.
     """
 
     road_id: str | None
@@ -131,16 +135,28 @@ def crossing_point(
     return nearest_points(point, intersection)[1]
 
 
-def _side_key(text, road_index):
+def _side_keys(text) -> list[str]:
+    """List the ranked route first, then each alias, preserving distinct qualifiers."""
     side = parse_side(text)
     if side.reason:
-        return None
-    for name in (side.route, side.text):
+        return []
+    keys = []
+    for name in (side.route, *side.text.split("/")):
         if name is not None:
-            key = make_key(name)
-            if key in road_index:
-                return key
-    return None
+            key = make_key(normalize_road(name))
+            if key not in keys:
+                keys.append(key)
+    return keys
+
+
+def _fallback_v1(point, road_index) -> RoadMatch:
+    """Retain nearest-road evidence without automatically passing an unverified name."""
+    result = nearest_v1(point, road_index)
+    return replace(
+        result,
+        tier="flag" if result.tier == "auto" else result.tier,
+        method="fallback_v1",
+    )
 
 
 def associate(
@@ -150,28 +166,36 @@ def associate(
 ) -> RoadMatch:
     """Check the named crossing using a road index from build_road_index.
 
-    Missing/unparseable names or unavailable roads fall back to nearest_v1.
-    Known roads that do not intersect, or name the same road twice, are manual.
+    Try each side's route and aliases in priority order. Return the first pair
+    of distinct keys that intersects; exhaust available pairs before manual.
+    Missing/unparseable names or unavailable roads use fallback_v1, capped at flag.
+    NOT_INTERSECTION records use nearest_v1 directly and may retain auto.
     MultiPoint and line intersections use their actual nearest point to the signal.
     """
     _validate_point(point)
     name = check_intersection_name(location_std)
+    if name.status == "NOT_INTERSECTION":
+        return nearest_v1(point, road_index)
     if name.proposed is None:
-        return nearest_v1(point, road_index)
+        return _fallback_v1(point, road_index)
     sides = name.proposed.split(" @ ")
-    keys = [_side_key(side, road_index) for side in sides]
-    if len(keys) != 2 or any(key is None for key in keys):
-        return nearest_v1(point, road_index)
-    if keys[0] == keys[1]:
-        return RoadMatch(None, inf, inf, "manual", method="named_crossing")
-    crossing = crossing_point(road_index[keys[0]], road_index[keys[1]], point)
-    if crossing is None:
-        return RoadMatch(None, inf, inf, "manual", method="named_crossing")
-    distance = point.distance(crossing)
-    return RoadMatch(
-        make_key(name.proposed),
-        distance,
-        inf,
-        classify_distance(distance),
-        method="named_crossing",
-    )
+    candidates = [
+        [key for key in _side_keys(side) if key in road_index] for side in sides
+    ]
+    if len(candidates) != 2 or any(not keys for keys in candidates):
+        return _fallback_v1(point, road_index)
+    for first, second in product(*candidates):
+        if first == second:
+            continue
+        crossing = crossing_point(road_index[first], road_index[second], point)
+        if crossing is None:
+            continue
+        distance = point.distance(crossing)
+        return RoadMatch(
+            make_key(name.proposed),
+            distance,
+            inf,
+            classify_distance(distance),
+            method="named_crossing",
+        )
+    return RoadMatch(None, inf, inf, "manual", method="named_crossing")
