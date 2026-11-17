@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 
-from signal_qaqc.checks import check_required, check_xy
+from signal_qaqc.checks import _classify, check_required, check_xy
 from signal_qaqc.geo import to_local, to_lonlat
 
 
@@ -73,21 +73,39 @@ def xy_signals():
 
 
 @pytest.mark.parametrize(
+    ("distance", "expected"),
+    [
+        pytest.param(0.0, None, id="zero"),
+        pytest.param(0.5, None, id="below_one_meter"),
+        pytest.param(1.0, None, id="exactly_one_meter"),
+        pytest.param(1.0001, ("warning", "review"), id="above_one_meter"),
+        pytest.param(15.0, ("warning", "review"), id="exactly_fifteen_meters"),
+        pytest.param(15.0001, ("error", "send_to_field"), id="above_fifteen_meters"),
+        pytest.param(20.0, ("error", "send_to_field"), id="well_above_fifteen_meters"),
+    ],
+)
+def test_classify_uses_exact_numeric_thresholds(distance, expected):
+    assert _classify(distance) == expected
+
+
+@pytest.mark.parametrize(
     ("dx", "dy", "severity", "action"),
     [
         pytest.param(0.0, 0.0, None, None, id="matching_coordinates"),
-        pytest.param(1.0, 0.0, None, None, id="exactly_one_meter"),
-        pytest.param(1.0001, 0.0, "warning", "review", id="above_one_meter"),
-        pytest.param(15.0, 0.0, "warning", "review", id="exactly_fifteen_meters"),
-        pytest.param(15.0001, 0.0, "error", "send_to_field", id="above_fifteen_meters"),
+        pytest.param(0.5, 0.0, None, None, id="half_a_meter"),
+        pytest.param(3.0, 0.0, "warning", "review", id="three_meters"),
+        pytest.param(20.0, 0.0, "error", "send_to_field", id="twenty_meters"),
         pytest.param(0.0, -20.0, "error", "send_to_field", id="negative_y_offset"),
-        pytest.param(0.8, 0.8, "warning", "review", id="diagonal_above_one_meter"),
         pytest.param(
-            10.0, 12.0, "error", "send_to_field", id="diagonal_above_fifteen_meters"
+            12.0,
+            12.0,
+            "error",
+            "send_to_field",
+            id="diagonal_well_above_fifteen_meters",
         ),
     ],
 )
-def test_check_xy_uses_meter_distances_and_strict_thresholds(
+def test_check_xy_projects_and_measures_offsets_away_from_thresholds(
     xy_signals, dx, dy, severity, action
 ):
     xy_signals.loc[0, "x"] += dx
@@ -115,11 +133,39 @@ def test_check_xy_rejects_missing_columns(xy_signals, missing):
         check_xy(xy_signals.drop(columns=missing))
 
 
+@pytest.mark.parametrize("value", [None, float("nan"), pd.NA, "", " \t\n"])
+@pytest.mark.parametrize("field", ["lon", "lat", "x", "y"])
+def test_missing_coordinates_are_reported_only_by_check_required(
+    xy_signals, field, value
+):
+    xy_signals.loc[0, field] = value
+
+    required_issues = check_required(xy_signals, ["lon", "lat", "x", "y"])
+    xy_issues = check_xy(xy_signals)
+
+    assert xy_issues == []
+    assert [
+        (issue["rule"], issue["field"]) for issue in required_issues + xy_issues
+    ] == [("required_field", field)]
+
+
+def test_check_xy_keeps_checking_other_records_after_missing_coordinates(xy_signals):
+    other_signal = xy_signals.copy(deep=True)
+    other_signal.loc[0, "signal_gid"] = "fictional-2"
+    other_signal.loc[0, "x"] += 20.0
+    xy_signals.loc[0, "lat"] = None
+    signals = pd.concat([xy_signals, other_signal], ignore_index=True)
+
+    issues = check_xy(signals)
+
+    assert len(issues) == 1
+    assert issues[0]["record_id"] == "fictional-2"
+    assert issues[0]["severity"] == "error"
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("lon", None),
-        ("lat", " "),
         ("x", "not a number"),
         ("y", float("inf")),
         ("lat", 91.0),
