@@ -150,9 +150,18 @@ V1 is retained unchanged for comparison with the implemented named-crossing rule
 Build the road index with `build_road_index`: each route is normalized before
 `make_key`, and repeated feature names have their segments merged. Each side of
 the signal name supplies its ranked route followed by all aliases/qualifiers.
-Try candidate pairs in that priority order, skip identical keys, and use the
-first distinct pair that actually intersects. If all available pairs fail,
-return manual. Shared route numbers can still have intersecting local aliases.
+Keep up to three available keys per side, skip identical keys, and compare all
+candidate pairs. Shared route numbers can still have intersecting local aliases.
+Before computing crossings, clip each candidate road to a buffer of
+`SEARCH_RADIUS_M = 2000.0` around the queried point. This excludes distant pieces
+of a same-name road without changing the index structure. Choose the nearest
+crossing across all pairs; route/alias priority breaks exact distance ties.
+
+`RoadMatch.road_keys` stores the actual selected pair. The cleaned table exposes
+`match_road_a` and `match_road_b`, and location exceptions include those keys.
+`match_reason` explains a missing local result: named roads outside the search
+window, no crossing inside it, or the same road on both sides. These cases keep
+their current manual classification pending the separate road-gap policy change.
 
 Measure the nearest point on the actual intersection. Multiple crossing points
 and overlapping line segments use their nearest point to the signal, never a
@@ -163,7 +172,8 @@ auto capped at flag because the claimed crossing has not been verified.
 
 ### Intersection and direction decisions
 
-The pipeline groups valid active records by `location_key` for named crossings.
+The pipeline groups valid active records by `location_key` for named crossings,
+excluding `D_distinct` candidates.
 It averages their local XY positions, runs `associate` at that mean, and shares
 the result with each member. The 15/50 m tiers describe this intersection mean.
 Drop rows and invalid points do not enter the mean. Source coordinates remain
@@ -176,9 +186,9 @@ This prevents a distant direction point from being hidden by averaging.
 
 `match_scope` is `intersection` for these shared decisions and `record` for
 individual checks. `intersection_x`, `intersection_y`, and `approach_distance_m`
-expose the evidence. Unverified fallbacks and `NOT_INTERSECTION` records retain
-individual road checks and do not get direction-layer warnings. Same-name road
-segment merging, alias selection, and no-crossing error policy remain unchanged.
+expose the evidence. `D_distinct` candidates, unverified fallbacks, and
+`NOT_INTERSECTION` records retain individual checks and do not get direction-layer
+warnings. Segment merging and the no-crossing error policy remain unchanged.
 
 ## Input answers, required fields, and XY
 

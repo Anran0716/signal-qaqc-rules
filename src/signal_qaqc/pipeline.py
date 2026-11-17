@@ -6,6 +6,7 @@ the cleaned table, but drop rows are excluded from location checks and heads.
 Named crossings are checked at the mean of their active, valid direction points.
 Direction distances from that mean are checked separately. Address-style records
 and unverified fallbacks retain their individual nearest-road evidence.
+D_distinct candidates are checked individually and never enter a shared mean.
 Persist cleaned.attrs['last_number'] between batches; the CLI stores it in JSON.
 """
 
@@ -48,6 +49,9 @@ _MATCH_COLUMNS = [
     "intersection_x",
     "intersection_y",
     "approach_distance_m",
+    "match_road_a",
+    "match_road_b",
+    "match_reason",
 ]
 _DERIVED_COLUMNS = [
     "location_std",
@@ -114,7 +118,11 @@ def _location_matches(frame, numeric, valid_points, road_index):
             continue
         point = Point(numeric.iloc[position]["x"], numeric.iloc[position]["y"])
         points[position] = point
-        if row.name_status == "NOT_INTERSECTION" or not row.location_key:
+        if (
+            row.dup_class == "D_distinct"
+            or row.name_status == "NOT_INTERSECTION"
+            or not row.location_key
+        ):
             decisions[position] = (
                 associate(point, row.location_std, road_index),
                 "record",
@@ -172,6 +180,9 @@ def _location_matches(frame, numeric, valid_points, road_index):
                 center.x if center is not None else None,
                 center.y if center is not None else None,
                 approach,
+                match.road_keys[0] if match.road_keys else None,
+                match.road_keys[1] if match.road_keys else None,
+                match.reason,
             ]
         )
         if match.tier != "auto":
@@ -194,7 +205,8 @@ def _location_matches(frame, numeric, valid_points, road_index):
                     action,
                     f"scope={scope}; {match.method}: {match.tier}; "
                     f"distance={distance}; "
-                    f"candidate={match.road_id}",
+                    f"candidate={match.road_id}; roads={match.road_keys}; "
+                    f"reason={match.reason}",
                 )
             )
         if approach is not None and approach > APPROACH_MAX_M:

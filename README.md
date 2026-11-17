@@ -27,9 +27,10 @@ Detailed behavior and assumptions are in [docs/RULES.md](docs/RULES.md).
 
 - Naming returns six states because incorrect, out-of-scope, and undecidable
   names need different actions.
-- Location matching uses the named crossing, tries route aliases, and selects
-  the nearest actual intersection point. Named intersections use active points'
-  mean positions, with a separate direction-outlier check. Unverified fallbacks cannot auto-pass.
+- Location matching compares nearby route/alias pairs and selects the nearest
+  actual crossing. Named intersections use eligible active points' mean positions,
+  with a separate direction-outlier check. `D_distinct` devices remain individual.
+  Unverified fallbacks cannot auto-pass.
   Paired tests retain strict expected failures for the nearest-road v1 baseline.
 - A repeated key can represent distinct signals. Only exact duplicates are
   marked drop; source rows remain available for review.
@@ -64,5 +65,8 @@ Distances use local EPSG:26914 meters; another region needs a suitable projectio
 Ranking Loop below FM/RR is a project assumption. The 15/50 m association
 thresholds need calibration against real field distributions. Public examples
 are synthetic, and private inputs and generated outputs are ignored by Git.
+`SEARCH_RADIUS_M = 2000.0` is an initial local-road search limit: a smaller radius
+can cut off a valid large interchange; a larger radius can admit remote same-name
+segments. Each side contributes at most three available keys (nine pairs).
 
 The original client project had no tests or version control. This repo is my rebuild of the rule logic on synthetic data to practice testing and CI.

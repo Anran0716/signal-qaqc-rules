@@ -31,6 +31,10 @@ belongs to the active points' mean, stored in `intersection_x/y`. The original
 coordinates are preserved. `approach_distance_m` measures each direction's
 offset from that mean; offsets above 60 m receive a separate warning. Singletons
 have no direction comparison. Fallbacks and beacons use `match_scope=record`.
+`D_distinct` device candidates also remain individual and are excluded from the
+intersection mean. `match_road_a/b` identify the selected named-road pair, and
+`match_reason` records why a local crossing could not be verified. Named matching
+clips roads to the initial 2000 m search window and compares up to nine pairs.
 
 Rules run in this order: original required answers and coordinates, standardized
 names/keys, duplicate marking, SignalID allocation, location matching, then head

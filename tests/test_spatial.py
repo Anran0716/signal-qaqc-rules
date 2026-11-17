@@ -371,22 +371,100 @@ def test_all_alias_pairs_must_be_exhausted_before_returning_manual():
     assert result.distance_m == inf
 
 
-def test_first_intersecting_candidate_pair_wins_over_a_closer_lower_priority_pair():
+def test_nearest_alias_pair_wins_over_a_farther_route_pair():
     x, y = 500_000.0, 3_300_000.0
     index = build_road_index(
         {
-            "IH 100": LineString([(x - 100, y), (x + 100, y)]),
-            "FM 200": LineString([(x + 30, y - 100), (x + 30, y + 100)]),
-            "OAK RD": LineString([(x, y - 100), (x, y + 100)]),
-            "ELM RD": LineString([(x - 100, y), (x + 100, y)]),
+            "IH 100": LineString([(x + 900, y + 1000), (x + 1100, y + 1000)]),
+            "FM 200": LineString([(x + 1000, y + 900), (x + 1000, y + 1100)]),
+            "OAK RD": LineString([(x - 100, y), (x + 100, y)]),
+            "ELM RD": LineString([(x, y - 100), (x, y + 100)]),
         }
     )
 
     result = associate(Point(x, y), "IH 100 / OAK RD @ FM 200 / ELM RD", index)
 
-    assert result.distance_m == pytest.approx(30.0)
-    assert result.tier == "flag"
+    assert result.distance_m == pytest.approx(0.0)
+    assert result.tier == "auto"
     assert result.method == "named_crossing"
+    assert result.road_keys == ("OAKRD", "ELMRD")
+
+
+def test_repeated_street_name_keeps_only_its_local_piece():
+    x, y = 500_000.0, 3_300_000.0
+    index = build_road_index(
+        [
+            ("Fictional Oak Rd", LineString([(x, y - 100), (x, y + 100)])),
+            (
+                "Fictional Oak Rd",
+                LineString([(x + 20_000, y - 100), (x + 20_000, y + 100)]),
+            ),
+            ("FM 100", LineString([(x - 100, y), (x + 20_100, y)])),
+        ]
+    )
+
+    result = associate(Point(x, y), "FM 100 @ Fictional Oak Rd", index)
+
+    assert result.tier == "auto"
+    assert result.distance_m == pytest.approx(0)
+    assert result.road_keys == ("FM100", "FICTIONALOAKRD")
+
+
+def test_named_roads_outside_search_radius_do_not_supply_a_remote_crossing():
+    x, y = 500_000.0, 3_300_000.0
+    index = build_road_index(
+        {
+            "IH 100": LineString([(x + 20_000, y), (x + 20_200, y)]),
+            "FM 200": LineString([(x + 20_100, y - 100), (x + 20_100, y + 100)]),
+        }
+    )
+
+    result = associate(Point(x, y), "IH 100 @ FM 200", index)
+
+    assert result.tier == "manual"
+    assert result.method == "named_crossing"
+    assert result.distance_m == inf
+    assert result.road_keys is None
+    assert result.reason == "named_road_outside_search_radius"
+
+
+@pytest.mark.parametrize(
+    ("offset", "finite"), [(-0.1, True), (0.0, True), (0.1, False)]
+)
+def test_search_radius_includes_boundary_contacts(offset, finite):
+    x, y, radius = 500_000.0, 3_300_000.0, 2_000.0
+    crossing_x = x + radius + offset
+    index = build_road_index(
+        {
+            "IH 100": LineString([(crossing_x - 20, y), (crossing_x + 20, y)]),
+            "FM 200": LineString([(crossing_x, y - 20), (crossing_x, y + 20)]),
+        }
+    )
+
+    result = associate(Point(x, y), "IH 100 @ FM 200", index)
+
+    if finite:
+        assert result.distance_m == pytest.approx(radius + offset)
+        assert result.road_keys == ("IH100", "FM200")
+    else:
+        assert result.distance_m == inf
+        assert result.road_keys is None
+
+
+def test_equal_distance_candidates_keep_route_priority_for_a_stable_tie():
+    x, y = 500_000.0, 3_300_000.0
+    index = build_road_index(
+        {
+            "IH 100": LineString([(x - 100, y), (x + 100, y)]),
+            "FM 200": LineString([(x, y - 100), (x, y + 100)]),
+            "OAK RD": LineString([(x - 100, y), (x + 100, y)]),
+            "ELM RD": LineString([(x, y - 100), (x, y + 100)]),
+        }
+    )
+
+    result = associate(Point(x, y), "IH 100 / OAK RD @ FM 200 / ELM RD", index)
+
+    assert result.road_keys == ("IH100", "FM200")
 
 
 def test_two_crossings_choose_the_actual_nearest_point_instead_of_the_centroid():

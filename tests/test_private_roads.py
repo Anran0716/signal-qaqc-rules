@@ -12,6 +12,7 @@ import pytest
 from signal_qaqc.adapt import adapt
 from signal_qaqc.io import read_table
 from signal_qaqc.pipeline import run
+from signal_qaqc.spatial import SEARCH_RADIUS_M
 
 PRIVATE = Path(__file__).resolve().parents[1] / "data/private"
 SNAPSHOT = PRIVATE / "signals_delivered_2025.csv"
@@ -46,3 +47,14 @@ def test_every_participating_record_has_a_match_decision():
     assert not heads["signal_gid"].isin(dropped).any()
     assert cleaned.loc[cleaned["dup_role"].eq("drop"), "match_tier"].isna().all()
     assert issues["record_id"].isin(cleaned["signal_gid"]).all()
+    distinct = participating.loc[participating["dup_class"].eq("D_distinct")]
+    assert distinct["match_scope"].eq("record").all()
+    assert distinct["approach_distance_m"].isna().all()
+    named = participating.loc[participating["match_method"].eq("named_crossing")]
+    distances = pd.to_numeric(named["match_distance_m"], errors="coerce")
+    finite = distances.map(lambda value: pd.notna(value) and isfinite(value))
+    local = named.loc[finite]
+    assert distances.loc[finite].le(SEARCH_RADIUS_M + 1e-6).all()
+    assert local[["match_road_a", "match_road_b"]].notna().all().all()
+    assert local["match_road_a"].ne(local["match_road_b"]).all()
+    assert named.loc[~finite, "match_reason"].notna().all()

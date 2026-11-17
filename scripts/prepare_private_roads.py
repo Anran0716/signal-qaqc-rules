@@ -151,6 +151,7 @@ def _counts(values):
 
 def _intersection_metrics(named, roads):
     """Reassociate mean XY for each named intersection; do not average distances."""
+    named = named.loc[named["dup_class"].ne("D_distinct")]
     if isinstance(roads, pd.DataFrame):
         roads = [
             (name, wkt.loads(raw))

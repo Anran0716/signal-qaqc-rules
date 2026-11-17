@@ -180,6 +180,12 @@ def test_intersection_metric_reassociates_mean_without_drop_or_fallback(prep):
     }
     issues = pd.DataFrame(columns=["rule", "severity", "record_id"])
 
+    distinct = cleaned.iloc[0].to_dict()
+    distinct.update(
+        signal_gid="fictional-distinct", dup_class="D_distinct", x=x + 10_000
+    )
+    cleaned = pd.concat([cleaned, pd.DataFrame([distinct])], ignore_index=True)
+
     metrics = prep["pipeline_metrics"](cleaned, pd.DataFrame(), issues, roads)[
         "matching"
     ]

@@ -164,3 +164,41 @@ def test_repeated_pipeline_run_does_not_compare_derived_intersection_fields(road
         first[["intersection_x", "intersection_y", "approach_distance_m"]],
         second[["intersection_x", "intersection_y", "approach_distance_m"]],
     )
+
+
+def test_distinct_devices_are_individual_and_do_not_shift_intersection_mean(roads):
+    source = signals_at([(-12, 0), (12, 0), (0, -20), (0, 20)])
+    distinct = source.iloc[0].to_dict()
+    distinct.update(
+        signal_gid="fictional-distinct", city="Another Fictional City", x=X + 200
+    )
+    distinct["lon"], distinct["lat"] = to_lonlat(distinct["x"], distinct["y"])
+    source = pd.concat([source, pd.DataFrame([distinct])], ignore_index=True)
+
+    cleaned, _, issues = run(source, roads)
+
+    assert cleaned.loc[[0, 4], "dup_class"].tolist() == ["D_distinct"] * 2
+    assert cleaned.loc[[0, 4], "match_scope"].tolist() == ["record"] * 2
+    assert cleaned.loc[[0, 4], "match_distance_m"].tolist() == pytest.approx([12, 200])
+    assert cleaned.loc[[0, 4], "intersection_x"].isna().all()
+    assert cleaned.loc[[0, 4], "approach_distance_m"].isna().all()
+    assert cleaned.loc[1:3, "intersection_x"].tolist() == pytest.approx([X + 4] * 3)
+    assert not issues["rule"].eq("approach_distance").any()
+
+
+def test_selected_alias_pair_is_visible_in_rows_and_exception_details():
+    source = signals_at([(30, 0)], "IH 100 / OAK RD @ FM 200 / ELM RD")
+    roads = {
+        "IH 100": LineString([(X + 900, Y + 1000), (X + 1100, Y + 1000)]),
+        "FM 200": LineString([(X + 1000, Y + 900), (X + 1000, Y + 1100)]),
+        "OAK RD": LineString([(X - 100, Y), (X + 100, Y)]),
+        "ELM RD": LineString([(X, Y - 100), (X, Y + 100)]),
+    }
+
+    cleaned, _, issues = run(source, roads)
+
+    assert cleaned.loc[0, "match_road_a"] == "OAKRD"
+    assert cleaned.loc[0, "match_road_b"] == "ELMRD"
+    assert cleaned.loc[0, "match_tier"] == "flag"
+    detail = issues.loc[issues["rule"].eq("road_association"), "detail"].iloc[0]
+    assert "OAKRD" in detail and "ELMRD" in detail
