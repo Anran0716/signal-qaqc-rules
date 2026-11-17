@@ -110,9 +110,16 @@ def test_distance_baseline_counts_directions_and_excludes_fallbacks_and_no_cross
             "dup_role": ["keep", "review", "review", "keep", "drop"],
             "dup_class": [""] * 5,
             "name_status": ["OK"] * 5,
-            "match_tier": ["auto", "flag", "manual", "flag", None],
-            "match_method": ["named_crossing"] * 3 + ["fallback_v1", None],
+            "match_tier": ["auto", "flag", "flag", "flag", None],
+            "match_method": [
+                "named_crossing",
+                "named_crossing",
+                "road_gap",
+                "fallback_v1",
+                None,
+            ],
             "match_distance_m": [12, 18, float("inf"), 1, None],
+            "match_gap_m": [None, None, 1_000, None, None],
             "location_key": [
                 "IH10@FM100",
                 "IH10@FM100",
@@ -132,7 +139,14 @@ def test_distance_baseline_counts_directions_and_excludes_fallbacks_and_no_cross
         }
     )
     issues = pd.DataFrame(
-        [{"record_id": "fictional-c", "rule": "road_association", "severity": "error"}]
+        [
+            {
+                "record_id": "fictional-c",
+                "rule": "road_gap",
+                "severity": "warning",
+                "action": "review_in_office",
+            }
+        ]
     )
 
     roads = {
@@ -148,7 +162,10 @@ def test_distance_baseline_counts_directions_and_excludes_fallbacks_and_no_cross
     assert metrics["named_crossing_distance_median_m"] == 15.0
     assert metrics["no_crossing_records"] == 1
     assert metrics["no_crossing_intersections"] == 1
-    assert metrics["no_crossing_all_error"]
+    assert not metrics["no_crossing_all_error"]
+    assert metrics["no_crossing_all_office_review"]
+    assert metrics["road_gap_records"] == 1
+    assert metrics["road_gap_distance_median_m"] == 1_000
     assert metrics["fallback_v1_records"] == 1
     assert metrics["fallback_v1_all_flag"]
     assert metrics["named_intersection_count"] == 2
@@ -178,7 +195,7 @@ def test_intersection_metric_reassociates_mean_without_drop_or_fallback(prep):
         "IH 10": LineString([(x - 500, y), (x + 500, y)]),
         "FM 100": LineString([(x, y - 500), (x, y + 500)]),
     }
-    issues = pd.DataFrame(columns=["rule", "severity", "record_id"])
+    issues = pd.DataFrame(columns=["rule", "severity", "record_id", "action"])
 
     distinct = cleaned.iloc[0].to_dict()
     distinct.update(

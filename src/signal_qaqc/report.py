@@ -4,7 +4,9 @@ import pandas as pd
 
 COLUMNS = ["record_id", "rule", "field", "severity", "action", "detail"]
 SEVERITY_ORDER = {"error": 0, "warning": 1, "info": 2}
-ACTIONS = frozenset({"auto_fixed", "review", "send_to_field", "none"})
+ACTIONS = frozenset(
+    {"auto_fixed", "review", "review_in_office", "send_to_field", "none"}
+)
 
 
 def exception(record_id, rule, field, severity, action, detail) -> dict:

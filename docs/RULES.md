@@ -159,21 +159,31 @@ crossing across all pairs; route/alias priority breaks exact distance ties.
 
 `RoadMatch.road_keys` stores the actual selected pair. The cleaned table exposes
 `match_road_a` and `match_road_b`, and location exceptions include those keys.
-`match_reason` explains a missing local result: named roads outside the search
-window, no crossing inside it, or the same road on both sides. These cases keep
-their current manual classification pending the separate road-gap policy change.
+`match_reason` explains missing local evidence. If both distinct roads exist
+locally but no pair intersects, return `tier=flag`, `method=road_gap`, and the
+minimum road-to-road separation in `RoadMatch.gap_m` / `match_gap_m`. Exceptions
+use rule `road_gap`, severity warning, and action `review_in_office`, with the
+selected road keys and measured gap. The signal-to-crossing distance remains
+undefined; road-gap lengths do not use the 15/50 m location tiers.
+
+If either named road is missing in the index or local window, use `fallback_v1`.
+The fallback caps auto at flag and retains manual when nearest-road evidence
+already exceeds the location limit. If both sides resolve to the same key, use
+that conservative fallback with a separate naming reason and an office naming
+review. It does not represent a gap between two distinct roads. Names and source
+coordinates are not automatically repaired.
 
 Measure the nearest point on the actual intersection. Multiple crossing points
 and overlapping line segments use their nearest point to the signal, never a
 centroid. Missing/unparseable names or unavailable roads use `fallback_v1`, with
 auto capped at flag because the claimed crossing has not been verified.
 `NOT_INTERSECTION` records use `nearest_v1` directly and can retain auto. The
-`RoadMatch.method` records `named_crossing`, `fallback_v1`, or `nearest_v1`.
+`RoadMatch.method` records `named_crossing`, `road_gap`, `fallback_v1`, or `nearest_v1`.
 
 ### Intersection and direction decisions
 
-The pipeline groups valid active records by `location_key` for named crossings,
-excluding `D_distinct` candidates.
+The pipeline groups valid active records by `location_key` for named crossings
+and road-gap decisions, excluding `D_distinct` candidates.
 It averages their local XY positions, runs `associate` at that mean, and shares
 the result with each member. The 15/50 m tiers describe this intersection mean.
 Drop rows and invalid points do not enter the mean. Source coordinates remain
@@ -188,7 +198,8 @@ This prevents a distant direction point from being hidden by averaging.
 individual checks. `intersection_x`, `intersection_y`, and `approach_distance_m`
 expose the evidence. `D_distinct` candidates, unverified fallbacks, and
 `NOT_INTERSECTION` records retain individual checks and do not get direction-layer
-warnings. Segment merging and the no-crossing error policy remain unchanged.
+warnings. Road-gap groups retain direction checks, so uncertain topology does
+not hide an outlier. Segment merging remains unchanged.
 
 ## Input answers, required fields, and XY
 

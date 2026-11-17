@@ -52,6 +52,7 @@ _MATCH_COLUMNS = [
     "match_road_a",
     "match_road_b",
     "match_reason",
+    "match_gap_m",
 ]
 _DERIVED_COLUMNS = [
     "location_std",
@@ -134,26 +135,23 @@ def _location_matches(frame, numeric, valid_points, road_index):
 
     for positions in groups.values():
         first = positions[0]
-        # Probe eligibility with the existing matcher. A fallback keeps its
-        # original per-record evidence and never receives a direction check.
-        probe = associate(points[first], rows[first].location_std, road_index)
-        if probe.method != "named_crossing":
-            decisions[first] = (probe, "record", None, None)
-            for position in positions[1:]:
-                match = associate(
-                    points[position], rows[position].location_std, road_index
-                )
-                decisions[position] = (match, "record", None, None)
-            continue
         center = Point(
             sum(points[position].x for position in positions) / len(positions),
             sum(points[position].y for position in positions) / len(positions),
         )
-        match = (
-            probe
-            if len(positions) == 1
-            else associate(center, rows[first].location_std, road_index)
-        )
+        match = associate(center, rows[first].location_std, road_index)
+        if match.method not in {"named_crossing", "road_gap"}:
+            # Unverified names/roads keep their original per-record evidence.
+            for position in positions:
+                individual = (
+                    match
+                    if len(positions) == 1
+                    else associate(
+                        points[position], rows[position].location_std, road_index
+                    )
+                )
+                decisions[position] = (individual, "record", None, None)
+            continue
         for position in positions:
             approach = points[position].distance(center) if len(positions) > 1 else None
             decisions[position] = (match, "intersection", center, approach)
@@ -183,9 +181,11 @@ def _location_matches(frame, numeric, valid_points, road_index):
                 match.road_keys[0] if match.road_keys else None,
                 match.road_keys[1] if match.road_keys else None,
                 match.reason,
+                match.gap_m,
             ]
         )
         if match.tier != "auto":
+            rule, field = "road_association", "x,y"
             severity, action = (
                 ("warning", "review")
                 if match.tier == "flag"
@@ -196,17 +196,35 @@ def _location_matches(frame, numeric, valid_points, road_index):
                 if isfinite(match.distance_m)
                 else "unavailable"
             )
+            detail = (
+                f"scope={scope}; {match.method}: {match.tier}; distance={distance}; "
+                f"candidate={match.road_id}; roads={match.road_keys}; "
+                f"reason={match.reason}"
+            )
+            if match.method == "road_gap":
+                rule, field = "road_gap", "location_std"
+                severity, action = "warning", "review_in_office"
+                detail = (
+                    f"scope={scope}; road layer {match.road_keys} does not intersect; "
+                    f"nearest road gap={match.gap_m:.3f} m. "
+                    "Review the road network in the office."
+                )
+            elif match.reason == "same_road_on_both_sides":
+                rule, field = "intersection_name", "location_std"
+                severity, action = "warning", "review_in_office"
+                detail = (
+                    "Both sides resolve to the same road key; verify aliases or "
+                    "frontage-road naming in the office. Nearest-road fallback "
+                    f"evidence: distance={distance}; candidate={match.road_id}."
+                )
             issues.append(
                 exception(
                     row.signal_gid,
-                    "road_association",
-                    "x,y",
+                    rule,
+                    field,
                     severity,
                     action,
-                    f"scope={scope}; {match.method}: {match.tier}; "
-                    f"distance={distance}; "
-                    f"candidate={match.road_id}; roads={match.road_keys}; "
-                    f"reason={match.reason}",
+                    detail,
                 )
             )
         if approach is not None and approach > APPROACH_MAX_M:

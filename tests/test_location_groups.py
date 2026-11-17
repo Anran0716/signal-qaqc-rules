@@ -202,3 +202,49 @@ def test_selected_alias_pair_is_visible_in_rows_and_exception_details():
     assert cleaned.loc[0, "match_tier"] == "flag"
     detail = issues.loc[issues["rule"].eq("road_association"), "detail"].iloc[0]
     assert "OAKRD" in detail and "ELMRD" in detail
+
+
+def test_road_gap_exception_requests_office_review_and_includes_gap_evidence():
+    roads = {
+        "IH 10": LineString([(X - 500, Y), (X + 500, Y)]),
+        "FM 100": LineString([(X - 500, Y + 30), (X + 500, Y + 30)]),
+    }
+
+    cleaned, _, issues = run(signals_at([(0, 0)]), roads)
+
+    assert cleaned.loc[0, "match_method"] == "road_gap"
+    assert cleaned.loc[0, "match_tier"] == "flag"
+    assert cleaned.loc[0, "match_scope"] == "intersection"
+    assert cleaned.loc[0, "match_gap_m"] == pytest.approx(30)
+    assert issues["rule"].tolist() == ["road_gap"]
+    assert issues["severity"].tolist() == ["warning"]
+    assert issues["action"].tolist() == ["review_in_office"]
+    assert "30.000 m" in issues.loc[0, "detail"]
+    assert "IH10" in issues.loc[0, "detail"] and "FM100" in issues.loc[0, "detail"]
+
+
+def test_road_gap_groups_retain_direction_outlier_checks():
+    roads = {
+        "IH 10": LineString([(X - 500, Y), (X + 500, Y)]),
+        "FM 100": LineString([(X - 500, Y + 30), (X + 500, Y + 30)]),
+    }
+
+    cleaned, _, issues = run(signals_at([(0, 0), (4, 0), (-4, 0), (200, 0)]), roads)
+
+    assert cleaned["match_method"].tolist() == ["road_gap"] * 4
+    assert cleaned["match_scope"].tolist() == ["intersection"] * 4
+    assert issues.loc[issues["rule"].eq("approach_distance"), "record_id"].tolist() == [
+        "fictional-4"
+    ]
+
+
+def test_same_key_sides_request_name_review_without_claiming_a_road_gap(roads):
+    cleaned, _, issues = run(signals_at([(0, 0)], "IH 10 @ IH 10"), roads)
+
+    assert cleaned.loc[0, "match_method"] == "fallback_v1"
+    assert cleaned.loc[0, "match_tier"] == "flag"
+    assert cleaned.loc[0, "match_reason"] == "same_road_on_both_sides"
+    assert pd.isna(cleaned.loc[0, "match_gap_m"])
+    assert issues["rule"].tolist() == ["intersection_name"]
+    assert issues["action"].tolist() == ["review_in_office"]
+    assert issues["severity"].tolist() == ["warning"]

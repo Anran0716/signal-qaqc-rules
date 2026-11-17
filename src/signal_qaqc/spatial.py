@@ -5,6 +5,7 @@ wrong-crossing failures. Associate measures the nearest point on the named roads
 actual intersection, including multiple crossings and overlapping line segments.
 Named roads are clipped to a local search window before intersecting them. All
 distinct candidate pairs are compared; route/alias priority breaks exact ties.
+Nearby distinct roads without an intersection produce an office-review road_gap.
 Unverified fallbacks are capped at flag and marked fallback_v1. NOT_INTERSECTION
 records use nearest_v1 directly because their location is defined along a road.
 Build the road index once with build_road_index before processing signal records.
@@ -36,10 +37,11 @@ AMBIGUITY_GAP_M = 10.0
 class RoadMatch:
     """Candidate evidence; only auto permits association.
 
-    road_id holds a road key for v1 or an intersection key for named_crossing.
-    method is named_crossing, fallback_v1, or nearest_v1 for direct road checks.
+    road_id holds a v1 road candidate or a named intersection claim.
+    method is named_crossing, road_gap, fallback_v1, or nearest_v1.
     road_keys records the actual selected pair, including aliases. reason explains
-    a named match without a local crossing; its tier remains manual for now.
+    a named match without a local crossing. gap_m measures road-layer separation,
+    independently of the signal-to-crossing distance.
     """
 
     road_id: str | None
@@ -49,6 +51,7 @@ class RoadMatch:
     method: str = "nearest_v1"
     road_keys: tuple[str, str] | None = None
     reason: str | None = None
+    gap_m: float | None = None
 
 
 def classify_distance(distance_m: float) -> str:
@@ -156,13 +159,14 @@ def _side_keys(text) -> list[str]:
     return keys
 
 
-def _fallback_v1(point, road_index) -> RoadMatch:
+def _fallback_v1(point, road_index, *, reason=None) -> RoadMatch:
     """Retain nearest-road evidence without automatically passing an unverified name."""
     result = nearest_v1(point, road_index)
     return replace(
         result,
         tier="flag" if result.tier == "auto" else result.tier,
         method="fallback_v1",
+        reason=reason,
     )
 
 
@@ -177,6 +181,8 @@ def associate(
     Compare every distinct pair and select the nearest actual crossing. Exact
     ties retain route/alias priority. Record the selected keys for audit.
     Missing/unparseable names or unavailable roads use fallback_v1, capped at flag.
+    Distinct nearby roads without a crossing return road_gap with a minimum gap;
+    gap length does not use the signal-to-crossing location thresholds.
     NOT_INTERSECTION records use nearest_v1 directly and may retain auto.
     MultiPoint and line intersections use their actual nearest point to the signal.
     """
@@ -185,43 +191,45 @@ def associate(
     if name.status == "NOT_INTERSECTION":
         return nearest_v1(point, road_index)
     if name.proposed is None:
-        return _fallback_v1(point, road_index)
+        return _fallback_v1(point, road_index, reason="unparseable_intersection_name")
     sides = name.proposed.split(" @ ")
     candidates = [
         [key for key in _side_keys(side) if key in road_index][:3] for side in sides
     ]
     if len(candidates) != 2 or any(not keys for keys in candidates):
-        return _fallback_v1(point, road_index)
+        return _fallback_v1(point, road_index, reason="named_road_not_in_index")
     pairs = [
         (first, second) for first, second in product(*candidates) if first != second
     ]
     if not pairs:
-        return RoadMatch(
-            None,
-            inf,
-            inf,
-            "manual",
-            method="named_crossing",
-            reason="same_road_on_both_sides",
-        )
+        return _fallback_v1(point, road_index, reason="same_road_on_both_sides")
     window = point.buffer(SEARCH_RADIUS_M, quad_segs=128)
     nearby = {}
     for key in dict.fromkeys(key for keys in candidates for key in keys):
         _validate_road(road_index[key], key)
         nearby[key] = road_index[key].intersection(window)
     if any(all(nearby[key].is_empty for key in keys) for keys in candidates):
-        return RoadMatch(
-            None,
-            inf,
-            inf,
-            "manual",
-            method="named_crossing",
-            reason="named_road_outside_search_radius",
+        return _fallback_v1(
+            point, road_index, reason="named_road_outside_search_radius"
         )
-    best = None
+    best, best_gap = None, None
     for first, second in pairs:
+        if nearby[first].is_empty or nearby[second].is_empty:
+            continue
         hit = nearby[first].intersection(nearby[second])
         if hit.is_empty:
+            gap = nearby[first].distance(nearby[second])
+            if best_gap is None or gap < best_gap.gap_m:
+                best_gap = RoadMatch(
+                    make_key(name.proposed),
+                    inf,
+                    inf,
+                    "flag",
+                    method="road_gap",
+                    road_keys=(first, second),
+                    reason="no_crossing_in_search_radius",
+                    gap_m=gap,
+                )
             continue
         # A boundary clip can be a Point/GeometryCollection, not only a line.
         crossing = nearest_points(point, hit)[1]
@@ -235,11 +243,8 @@ def associate(
                 method="named_crossing",
                 road_keys=(first, second),
             )
-    return best or RoadMatch(
-        None,
-        inf,
-        inf,
-        "manual",
-        method="named_crossing",
-        reason="no_crossing_in_search_radius",
+    return (
+        best
+        or best_gap
+        or _fallback_v1(point, road_index, reason="named_road_outside_search_radius")
     )

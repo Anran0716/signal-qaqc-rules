@@ -1,4 +1,4 @@
-"""Prepare a private road export and measure the unchanged pipeline baseline.
+"""Prepare a private road export and measure the current pipeline revision.
 
 Run from an installed checkout with a TxDOT CSV path as the positional argument.
 Defaults read the local delivery snapshot and write roads_26914.csv/baseline.json
@@ -185,15 +185,31 @@ def pipeline_metrics(cleaned, heads, issues, roads):
     """Measure direction distances and re-associated intersection means separately."""
     active = cleaned.loc[cleaned["dup_role"].ne("drop")]
     participants = active.loc[active["match_tier"].notna()]
-    named = participants.loc[participants["match_method"].eq("named_crossing")]
+    named = participants.loc[
+        participants["match_method"].isin(["named_crossing", "road_gap"])
+    ]
     distances = pd.to_numeric(named["match_distance_m"], errors="coerce")
     finite = distances.map(lambda value: pd.notna(value) and isfinite(value))
     valid_distances = distances.loc[finite]
     no_crossing = named.loc[~finite]
+    road_gaps = participants.loc[participants["match_method"].eq("road_gap")]
+    gap_distances = (
+        pd.to_numeric(road_gaps["match_gap_m"], errors="coerce")
+        if len(road_gaps)
+        else pd.Series(dtype=float)
+    )
     fallback = participants.loc[participants["match_method"].eq("fallback_v1")]
     location_errors = set(
         issues.loc[
             issues["rule"].eq("road_association") & issues["severity"].eq("error"),
+            "record_id",
+        ]
+    )
+    office_gap_reviews = set(
+        issues.loc[
+            issues["rule"].eq("road_gap")
+            & issues["severity"].eq("warning")
+            & issues["action"].eq("review_in_office"),
             "record_id",
         ]
     )
@@ -228,6 +244,15 @@ def pipeline_metrics(cleaned, heads, issues, roads):
             "no_crossing_records": len(no_crossing),
             "no_crossing_intersections": int(no_crossing["location_key"].nunique()),
             "no_crossing_all_error": set(no_crossing["signal_gid"]) <= location_errors,
+            "no_crossing_all_office_review": set(no_crossing["signal_gid"])
+            <= office_gap_reviews,
+            "road_gap_records": len(road_gaps),
+            "road_gap_intersections": int(road_gaps["location_key"].nunique()),
+            "road_gap_all_office_review": set(road_gaps["signal_gid"])
+            <= office_gap_reviews,
+            "road_gap_distance_median_m": round(float(gap_distances.median()), 1)
+            if len(gap_distances)
+            else None,
             "fallback_v1_records": len(fallback),
             "fallback_v1_all_flag": bool(fallback["match_tier"].eq("flag").all()),
         },
@@ -291,7 +316,7 @@ def main(argv=None):
         args.road_export, signals, args.output, buffer_m=args.buffer_km * 1_000
     )
     print(
-        f"Prepared {len(roads)} road segments. Running the unchanged pipeline...",
+        f"Prepared {len(roads)} road segments. Running the current pipeline...",
         flush=True,
     )
     cleaned, heads, issues = run(signals, roads)

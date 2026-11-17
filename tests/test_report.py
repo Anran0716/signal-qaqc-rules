@@ -4,7 +4,9 @@ from signal_qaqc.report import exception, to_frame
 
 
 @pytest.mark.parametrize("severity", ["error", "warning", "info"])
-@pytest.mark.parametrize("action", ["auto_fixed", "review", "send_to_field", "none"])
+@pytest.mark.parametrize(
+    "action", ["auto_fixed", "review", "review_in_office", "send_to_field", "none"]
+)
 def test_exception_returns_standard_fields_for_valid_values(severity, action):
     row = exception(
         "signal-1", "required_field", "preemption", severity, action, "Missing answer"

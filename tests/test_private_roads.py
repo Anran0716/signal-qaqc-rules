@@ -37,7 +37,7 @@ def test_every_participating_record_has_a_match_decision():
     assert participating["match_tier"].isin(["auto", "flag", "manual"]).all()
     assert (
         participating["match_method"]
-        .isin(["named_crossing", "fallback_v1", "nearest_v1"])
+        .isin(["named_crossing", "road_gap", "fallback_v1", "nearest_v1"])
         .all()
     )
     fallback = participating.loc[participating["match_method"].eq("fallback_v1")]
@@ -58,3 +58,13 @@ def test_every_participating_record_has_a_match_decision():
     assert local[["match_road_a", "match_road_b"]].notna().all().all()
     assert local["match_road_a"].ne(local["match_road_b"]).all()
     assert named.loc[~finite, "match_reason"].notna().all()
+    gaps = participating.loc[participating["match_method"].eq("road_gap")]
+    assert gaps["match_tier"].eq("flag").all()
+    assert gaps[["match_road_a", "match_road_b", "match_gap_m"]].notna().all().all()
+    assert gaps["match_road_a"].ne(gaps["match_road_b"]).all()
+    assert gaps["match_gap_m"].astype(float).map(isfinite).all()
+    assert gaps["match_gap_m"].astype(float).ge(0).all()
+    gap_issues = issues.loc[issues["rule"].eq("road_gap")]
+    assert gap_issues["severity"].eq("warning").all()
+    assert gap_issues["action"].eq("review_in_office").all()
+    assert set(gaps["signal_gid"]) == set(gap_issues["record_id"])

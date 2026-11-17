@@ -225,13 +225,14 @@ def test_associate_uses_the_shared_distance_tiers(roads, offset, expected):
     assert result.tier == expected
 
 
-def test_two_known_parallel_roads_require_manual_review_without_v1_fallback(roads):
+def test_two_known_parallel_roads_are_a_road_gap_without_v1_fallback(roads):
     result = associate(Point(500_100, 3_300_005), "IH 10 @ US 90", roads)
 
-    assert result.tier == "manual"
-    assert result.road_id is None
+    assert result.tier == "flag"
     assert result.distance_m == inf
-    assert result.method == "named_crossing"
+    assert result.method == "road_gap"
+    assert result.gap_m == pytest.approx(100)
+    assert result.road_keys == ("IH10", "US90")
 
 
 @pytest.mark.parametrize(
@@ -354,7 +355,7 @@ def test_shared_loop_route_tries_mainline_and_access_road_qualifiers(direction):
     assert result.method == "named_crossing"
 
 
-def test_all_alias_pairs_must_be_exhausted_before_returning_manual():
+def test_all_alias_pairs_are_compared_before_reporting_the_smallest_road_gap():
     x, y = 500_000.0, 3_300_000.0
     index = build_road_index(
         {
@@ -366,9 +367,11 @@ def test_all_alias_pairs_must_be_exhausted_before_returning_manual():
 
     result = associate(Point(x, y), "FM 100 / OAK RD @ FM 100 / ELM RD", index)
 
-    assert result.tier == "manual"
-    assert result.method == "named_crossing"
+    assert result.tier == "flag"
+    assert result.method == "road_gap"
     assert result.distance_m == inf
+    assert result.gap_m == pytest.approx(20)
+    assert result.road_keys == ("OAKRD", "ELMRD")
 
 
 def test_nearest_alias_pair_wins_over_a_farther_route_pair():
@@ -422,10 +425,11 @@ def test_named_roads_outside_search_radius_do_not_supply_a_remote_crossing():
     result = associate(Point(x, y), "IH 100 @ FM 200", index)
 
     assert result.tier == "manual"
-    assert result.method == "named_crossing"
-    assert result.distance_m == inf
+    assert result.method == "fallback_v1"
+    assert result.distance_m == pytest.approx(20_000)
     assert result.road_keys is None
     assert result.reason == "named_road_outside_search_radius"
+    assert result.gap_m is None
 
 
 @pytest.mark.parametrize(
@@ -447,8 +451,10 @@ def test_search_radius_includes_boundary_contacts(offset, finite):
         assert result.distance_m == pytest.approx(radius + offset)
         assert result.road_keys == ("IH100", "FM200")
     else:
-        assert result.distance_m == inf
+        assert result.method == "fallback_v1"
         assert result.road_keys is None
+        assert result.gap_m is None
+        assert result.reason == "named_road_outside_search_radius"
 
 
 def test_equal_distance_candidates_keep_route_priority_for_a_stable_tie():
@@ -510,8 +516,98 @@ def test_overlapping_roads_use_the_nearest_point_on_the_overlap():
 def test_a_road_cannot_be_its_own_claimed_intersection(roads):
     result = associate(Point(500_100, 3_300_000), "IH 10 @ I-10", roads)
 
-    assert result.tier == "manual"
+    assert result.tier == "flag"
+    assert result.method == "fallback_v1"
+    assert result.reason == "same_road_on_both_sides"
+    assert result.gap_m is None
+
+
+@pytest.mark.parametrize("gap", [30, 125])
+def test_parallel_road_gaps_are_office_flags_even_above_location_distance_limits(gap):
+    x, y = 500_000.0, 3_300_000.0
+    index = build_road_index(
+        {
+            "IH 100": LineString([(x - 100, y), (x + 100, y)]),
+            "FM 200": LineString([(x - 100, y + gap), (x + 100, y + gap)]),
+        }
+    )
+
+    result = associate(Point(x, y), "IH 100 @ FM 200", index)
+
+    assert result.method == "road_gap"
+    assert result.tier == "flag"
+    assert result.gap_m == pytest.approx(gap)
+    assert result.distance_m == inf
+
+
+def test_digitizing_break_is_a_road_gap():
+    x, y = 500_000.0, 3_300_000.0
+    index = build_road_index(
+        {
+            "IH 100": LineString([(x - 100, y), (x - 5, y)]),
+            "FM 200": LineString([(x, y), (x, y + 100)]),
+        }
+    )
+
+    result = associate(Point(x, y), "IH 100 @ FM 200", index)
+
+    assert result.method == "road_gap"
+    assert result.tier == "flag"
+    assert result.gap_m == pytest.approx(5)
+
+
+def test_one_road_missing_locally_uses_capped_nearest_road_fallback():
+    x, y = 500_000.0, 3_300_000.0
+    index = build_road_index(
+        {
+            "IH 100": LineString([(x - 100, y), (x + 100, y)]),
+            "FM 200": LineString([(x + 3_000, y - 100), (x + 3_000, y + 100)]),
+        }
+    )
+
+    result = associate(Point(x, y), "IH 100 @ FM 200", index)
+
+    assert result.method == "fallback_v1"
+    assert result.tier == "flag"
+    assert result.distance_m == pytest.approx(0)
+    assert result.gap_m is None
+
+
+def test_a_real_crossing_takes_precedence_over_a_nearer_gap_pair():
+    x, y = 500_000.0, 3_300_000.0
+    index = build_road_index(
+        {
+            "IH 100": LineString([(x - 100, y + 100), (x + 100, y + 100)]),
+            "FM 200": LineString([(x, y + 90), (x, y + 110)]),
+            "OAK RD": LineString([(x - 10, y), (x + 10, y)]),
+            "ELM RD": LineString([(x - 10, y + 5), (x + 10, y + 5)]),
+        }
+    )
+
+    result = associate(Point(x, y), "IH 100 / OAK RD @ FM 200 / ELM RD", index)
+
     assert result.method == "named_crossing"
+    assert result.tier == "manual"
+    assert result.distance_m == pytest.approx(100)
+    assert result.gap_m is None
+
+
+def test_shared_route_alone_does_not_count_as_two_nearby_roads():
+    x, y = 500_000.0, 3_300_000.0
+    index = build_road_index(
+        {
+            "FM 100": LineString([(x - 100, y), (x + 100, y)]),
+            "OAK RD": LineString([(x + 3_000, y - 100), (x + 3_000, y + 100)]),
+            "ELM RD": LineString([(x + 4_000, y - 100), (x + 4_000, y + 100)]),
+        }
+    )
+
+    result = associate(Point(x, y), "FM 100 / OAK RD @ FM 100 / ELM RD", index)
+
+    assert result.method == "fallback_v1"
+    assert result.tier == "flag"
+    assert result.reason == "named_road_outside_search_radius"
+    assert result.gap_m is None
 
 
 @pytest.mark.parametrize("name", ["", None])

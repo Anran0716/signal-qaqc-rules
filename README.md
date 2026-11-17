@@ -19,6 +19,7 @@ project makes those decisions explicit and produces a consistent exception table
 | Duplicate candidates | Canonical name + travel direction, attributes, and distance | Five classes; annotate keep/drop/review without deleting rows |
 | SignalID | Preserve valid unique IDs; assign after duplicate marking | Opaque `SIG-00001` IDs; persist the highest number to prevent reuse |
 | Location | Measure the intersection mean to the named crossing; check each direction's offset | <=15 m auto; <=50 m flag; >50 m manual; direction offset >60 m warning |
+| Road layer | Two distinct nearby roads do not intersect | `road_gap` flag with measured separation; `review_in_office` |
 | Heads | Discover all numbered head fields and reconcile delivery by parent/position | Report duplicate, missing, stale, orphan, dropped, or changed heads |
 
 Detailed behavior and assumptions are in [docs/RULES.md](docs/RULES.md).
@@ -31,6 +32,8 @@ Detailed behavior and assumptions are in [docs/RULES.md](docs/RULES.md).
   actual crossing. Named intersections use eligible active points' mean positions,
   with a separate direction-outlier check. `D_distinct` devices remain individual.
   Unverified fallbacks cannot auto-pass.
+  Missing crossing evidence gets office review with a measured road gap;
+  missing roads retain conservative nearest-road fallback evidence.
   Paired tests retain strict expected failures for the nearest-road v1 baseline.
 - A repeated key can represent distinct signals. Only exact duplicates are
   marked drop; source rows remain available for review.

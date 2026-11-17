@@ -31,8 +31,20 @@ The selected keys are retained as matching evidence, including alias matches.
 The search radius is provisional. Too small a window can exclude a valid large
 interchange crossing; too large a window can reintroduce remote same-name road
 pieces. Retain the pre-change artifacts and compare stages separately. Missing
-local roads/crossings are identified explicitly; their severity policy belongs
-to the subsequent road-gap change.
+local roads/crossings are identified explicitly and handled separately below.
+
+## Missing crossing evidence and office review
+
+When two distinct named roads are present locally but do not intersect, report
+`road_gap` as a flag, measure their minimum separation, and recommend
+`review_in_office`. The gap is road-layer evidence, not a signal-position error
+or a replacement for signal-to-crossing distance. Office review must check names
+and topology before deciding whether the point needs field verification.
+
+If a named road is missing locally, retain the per-record nearest-road fallback,
+capped so it cannot auto-pass. A same-key result on both sides is kept as a
+separate naming-review reason with an office action; it does not assert a road
+gap or guess a frontage-road alias. Those cases remain queued for inspection.
 
 ## Route names can hide local aliases
 
