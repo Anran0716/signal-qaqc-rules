@@ -113,14 +113,36 @@ def test_distance_baseline_counts_directions_and_excludes_fallbacks_and_no_cross
             "match_tier": ["auto", "flag", "manual", "flag", None],
             "match_method": ["named_crossing"] * 3 + ["fallback_v1", None],
             "match_distance_m": [12, 18, float("inf"), 1, None],
-            "location_key": ["FictionalMain@FictionalElm"] * 5,
+            "location_key": [
+                "IH10@FM100",
+                "IH10@FM100",
+                "IH10@US100",
+                "unavailable",
+                "IH10@FM100",
+            ],
+            "location_std": [
+                "IH 10 @ FM 100",
+                "IH 10 @ FM 100",
+                "IH 10 @ US 100",
+                "unavailable",
+                "IH 10 @ FM 100",
+            ],
+            "x": [499_988, 500_018, 500_000, 500_100, 510_000],
+            "y": [3_300_000] * 5,
         }
     )
     issues = pd.DataFrame(
         [{"record_id": "fictional-c", "rule": "road_association", "severity": "error"}]
     )
 
-    metrics = prep["pipeline_metrics"](cleaned, pd.DataFrame(), issues)["matching"]
+    roads = {
+        "IH 10": LineString([(499_500, 3_300_000), (500_500, 3_300_000)]),
+        "FM 100": LineString([(500_000, 3_299_500), (500_000, 3_301_500)]),
+        "US 100": LineString([(499_500, 3_301_000), (500_500, 3_301_000)]),
+    }
+    metrics = prep["pipeline_metrics"](cleaned, pd.DataFrame(), issues, roads)[
+        "matching"
+    ]
 
     assert metrics["participating_records"] == 4
     assert metrics["named_crossing_distance_median_m"] == 15.0
@@ -129,6 +151,43 @@ def test_distance_baseline_counts_directions_and_excludes_fallbacks_and_no_cross
     assert metrics["no_crossing_all_error"]
     assert metrics["fallback_v1_records"] == 1
     assert metrics["fallback_v1_all_flag"]
+    assert metrics["named_intersection_count"] == 2
+    assert metrics["finite_named_intersection_count"] == 1
+    assert metrics["named_intersection_distance_median_m"] == 3.0
+    assert metrics["named_intersections_within_auto_max"] == 1
+
+
+def test_intersection_metric_reassociates_mean_without_drop_or_fallback(prep):
+    x, y = 500_000.0, 3_300_000.0
+    cleaned = pd.DataFrame(
+        {
+            "signal_gid": [f"fictional-{n}" for n in range(6)],
+            "dup_role": ["keep"] * 4 + ["drop", "keep"],
+            "dup_class": [""] * 6,
+            "name_status": ["OK"] * 6,
+            "location_key": ["IH10@FM100"] * 6,
+            "location_std": ["IH 10 @ FM 100"] * 6,
+            "match_tier": ["auto", "auto", "flag", "flag", None, "flag"],
+            "match_method": ["named_crossing"] * 4 + [None, "fallback_v1"],
+            "match_distance_m": [12, 12, 20, 20, None, 10],
+            "x": [x - 12, x + 12, x, x, x + 10_000, x + 10_000],
+            "y": [y, y, y - 20, y + 20, y, y],
+        }
+    )
+    roads = {
+        "IH 10": LineString([(x - 500, y), (x + 500, y)]),
+        "FM 100": LineString([(x, y - 500), (x, y + 500)]),
+    }
+    issues = pd.DataFrame(columns=["rule", "severity", "record_id"])
+
+    metrics = prep["pipeline_metrics"](cleaned, pd.DataFrame(), issues, roads)[
+        "matching"
+    ]
+
+    assert metrics["named_intersection_count"] == 1
+    assert metrics["finite_named_intersection_count"] == 1
+    assert metrics["named_intersection_distance_median_m"] == pytest.approx(0)
+    assert metrics["named_intersections_within_auto_max"] == 1
 
 
 def test_existing_baseline_requires_explicit_overwrite(prep, tmp_path):

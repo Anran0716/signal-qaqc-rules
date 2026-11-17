@@ -23,13 +23,14 @@ import pyproj
 import shapely
 from pyproj import Transformer
 from shapely import wkt
-from shapely.geometry import LineString, MultiLineString, box
+from shapely.geometry import LineString, MultiLineString, Point, box
 from shapely.ops import transform
 
 from signal_qaqc.adapt import adapt
 from signal_qaqc.io import read_table
 from signal_qaqc.naming import make_key, normalize_road
 from signal_qaqc.pipeline import run
+from signal_qaqc.spatial import AUTO_MAX_M, associate, build_road_index
 
 ROOT = Path(__file__).resolve().parents[1]
 PRIVATE = ROOT / "data/private"
@@ -148,8 +149,39 @@ def _counts(values):
     return {str(key): int(count) for key, count in values.value_counts().items()}
 
 
-def pipeline_metrics(cleaned, heads, issues):
-    """Measure active records and named-crossing distances, excluding infinity."""
+def _intersection_metrics(named, roads):
+    """Reassociate mean XY for each named intersection; do not average distances."""
+    if isinstance(roads, pd.DataFrame):
+        roads = [
+            (name, wkt.loads(raw))
+            for name, raw in roads[["road_name", "geometry_wkt"]].itertuples(
+                index=False, name=None
+            )
+        ]
+    index = build_road_index(roads)
+    groups = named.groupby("location_key", sort=False)
+    distances = []
+    for _, group in groups:
+        xy = group[["x", "y"]].apply(pd.to_numeric, errors="raise").mean()
+        match = associate(Point(xy["x"], xy["y"]), group["location_std"].iloc[0], index)
+        if isfinite(match.distance_m):
+            distances.append(match.distance_m)
+    median = float(pd.Series(distances, dtype=float).median()) if distances else None
+    return {
+        "named_intersection_count": groups.ngroups,
+        "finite_named_intersection_count": len(distances),
+        "named_intersection_distance_median_m": round(median, 1)
+        if median is not None
+        else None,
+        "named_intersection_distance_median_unrounded_m": median,
+        "named_intersections_within_auto_max": sum(
+            value <= AUTO_MAX_M for value in distances
+        ),
+    }
+
+
+def pipeline_metrics(cleaned, heads, issues, roads):
+    """Measure direction distances and re-associated intersection means separately."""
     active = cleaned.loc[cleaned["dup_role"].ne("drop")]
     participants = active.loc[active["match_tier"].notna()]
     named = participants.loc[participants["match_method"].eq("named_crossing")]
@@ -173,6 +205,7 @@ def pipeline_metrics(cleaned, heads, issues):
             "name_status": _counts(cleaned["name_status"]),
         },
         "matching": {
+            **_intersection_metrics(named, roads),
             "participating_records": len(participants),
             "tier_counts": _counts(participants["match_tier"]),
             "method_counts": _counts(participants["match_method"]),
@@ -261,7 +294,7 @@ def main(argv=None):
         flush=True,
     )
     cleaned, heads, issues = run(signals, roads)
-    metrics = pipeline_metrics(cleaned, heads, issues)
+    metrics = pipeline_metrics(cleaned, heads, issues, roads)
     expected = (
         json.loads(args.expected.read_text(encoding="utf-8")) if args.expected else None
     )
