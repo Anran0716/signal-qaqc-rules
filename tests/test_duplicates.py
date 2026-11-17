@@ -178,8 +178,24 @@ def test_duplicate_marking_accepts_an_empty_table(signals):
     ]
 
 
-def test_invalid_coordinates_in_a_duplicate_group_require_repair_first(signals):
-    signals["x"] = pd.Series([500_000.0, None], dtype=object)
+@pytest.mark.parametrize(
+    "bad_coordinate", [None, "not a number", float("inf"), float("nan")]
+)
+def test_invalid_coordinates_in_a_duplicate_group_require_repair_first(
+    signals, bad_coordinate
+):
+    signals["x"] = pd.Series([500_000.0, bad_coordinate], dtype=object)
 
     with pytest.raises(ValueError, match="coordinates"):
         mark_duplicates(signals)
+
+
+@pytest.mark.parametrize("missing", ["location_std", "travel_direction", "x", "y"])
+def test_duplicate_marking_rejects_missing_required_columns(signals, missing):
+    with pytest.raises(ValueError, match=missing):
+        mark_duplicates(signals.drop(columns=missing))
+
+
+def test_duplicate_marking_rejects_missing_requested_business_attributes(signals):
+    with pytest.raises(ValueError, match="missing_business_field"):
+        mark_duplicates(signals, attribute_cols=["missing_business_field"])
