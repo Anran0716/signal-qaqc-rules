@@ -224,4 +224,5 @@ __marimo__/
 
 data/*.csv
 data/private/
+data/output/
 exceptions.csv
