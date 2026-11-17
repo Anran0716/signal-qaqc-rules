@@ -101,3 +101,47 @@ are later removed. Subsequent runs use the larger of that saved number and all
 valid input numbers, including drop rows. This prevents historical number reuse;
 the current batch alone cannot identify IDs removed from an earlier batch.
 Exhausting `99999` raises an error without changing the input table.
+
+## Location rules: nearest-road v1 baseline
+
+`spatial.py` intentionally retains `nearest_v1` for comparison with the later
+named-intersection version. The later version will reuse distance-only tiering
+through `classify_distance`, `AUTO_MAX_M = 15.0` and `FLAG_MAX_M = 50.0`.
+
+| Tier | Distance | Intended action |
+| --- | --- | --- |
+| `auto` | <= 15 m | Automatic association |
+| `flag` | > 15 m and <= 50 m | Warning; review |
+| `manual` | > 50 m | Error; send back to field |
+
+V1 measures distance to every road and returns the nearest candidate and the
+two smallest distances. If a point qualifies for `auto` but the second road is
+less than `AMBIGUITY_GAP_M = 10.0` m farther away, v1 changes its tier to `flag`.
+A gap of exactly 10 m is considered clear. Points beyond 50 m remain `manual`
+even when two roads are similarly distant. Only `auto` permits association;
+the returned `road_id` remains a candidate on review/manual results.
+
+All geometry uses local EPSG:26914 meters. Tests translate a fictional road
+network to `(500000, 3300000)` rather than using real intersections. Invalid
+point or road geometry raises an error; no roads produces a manual result.
+
+The first version has two demonstrated design failures:
+
+1. At a correct intersection, distances to both roads are 0 m. V1 calls this
+   ambiguous and flags it, even though the point is at the expected crossing.
+2. A point can be 8 m from one road and about 200 m from its claimed crossing.
+   The second road is 92 m away, so v1 confidently accepts the wrong location.
+
+These tests were first run as ordinary tests and failed with `flag != auto`
+and `auto != manual`. They remain strict expected failures (`xfail`) while
+separate passing tests characterize the observed v1 behavior. Unexpected passes
+fail the suite; exceptions other than the expected assertion failures also fail.
+Run the two desired-behavior tests as ordinary failures to inspect the evidence:
+
+```powershell
+python -m pytest tests/test_spatial.py -k known_v1_failure --runxfail -q
+```
+
+The design lesson is to check distance to the intersection claimed by the name,
+rather than asking whether one nearby road is clearly nearest. The improved
+version will be implemented separately; v1 is retained unchanged for comparison.
