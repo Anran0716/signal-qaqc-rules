@@ -71,5 +71,19 @@ are synthetic, and private inputs and generated outputs are ignored by Git.
 `SEARCH_RADIUS_M = 2000.0` is an initial local-road search limit: a smaller radius
 can cut off a valid large interchange; a larger radius can admit remote same-name
 segments. Each side contributes at most three available keys (nine pairs).
+Route-based road preparation currently omits local street aliases on state routes;
+fuzzy street-name matching is not implemented. A crossing in a 2D road layer does
+not establish an at-grade, signalized junction, especially around frontage roads.
+
+An intersection mean assumes its eligible records describe one physical junction.
+Unresolved devices or separate interchange ends sharing a name can shift that mean
+and give an otherwise nearby direction a manual tier. Excluding `D_distinct` and
+checking direction offsets reduce this risk but do not validate the grouping.
+
+`auto` describes location evidence only; required-field and duplicate exceptions
+still apply. A measured `road_gap` requires office review and can reflect either
+road coverage or road identity. Desk checks against the same road layer cannot
+confirm field correctness. Small record samples can also repeat one junction;
+independent imagery or field review is needed before claiming accuracy rates.
 
 The original client project had no tests or version control. This repo is my rebuild of the rule logic on synthetic data to practice testing and CI.
