@@ -180,14 +180,14 @@ def test_sample_pipeline_detects_every_injected_problem():
         "sample-023": {"xy_consistency"},
         "sample-024": {"intersection_name", "road_association"},
         "sample-025": {"intersection_name", "road_association"},
-        "sample-026": {"road_association"},
-        "sample-027": {"road_association"},
+        "sample-026": {"road_association", "approach_distance"},
+        "sample-027": {"road_association", "approach_distance"},
         "sample-028": {"required_field"},
         "sample-033": {"duplicate_record", "head_dropped"},
         "sample-034": {"duplicate_record", "head_dropped"},
         "sample-035": {"duplicate_record"},
         "sample-036": {"duplicate_record"},
-        "sample-037": {"duplicate_record", "road_association"},
+        "sample-037": {"duplicate_record"},
     }
     for gid, rules in expected.items():
         assert rules <= rules_by_id[gid], (gid, rules_by_id.get(gid))
@@ -198,7 +198,11 @@ def test_sample_pipeline_detects_every_injected_problem():
     assert by_gid.loc["sample-035", "dup_class"] == "B_near"
     assert by_gid.loc["sample-036", "dup_class"] == "C_conflict"
     assert by_gid.loc["sample-037", "dup_class"] == "D_distinct"
-    assert by_gid.loc["sample-026", "match_distance_m"] == pytest.approx(70)
+    # The injected point remains displaced; its location result now belongs to
+    # the shared intersection mean, while direction evidence remains separate.
+    assert signals.loc[25, "x"] - 500_000 == pytest.approx(70)
+    assert by_gid.loc["sample-026", "match_scope"] == "intersection"
+    assert by_gid.loc["sample-026", "approach_distance_m"] > 60
     assert by_gid.loc["sample-027", "match_tier"] == "manual"
     assert ((heads["signal_gid"] == "sample-001") & (heads["position"] == 4)).any()
     assert not (

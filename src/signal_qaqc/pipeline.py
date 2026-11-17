@@ -3,6 +3,9 @@
 Checks inspect original answers before any naming changes. Standardized names
 feed duplicate grouping; only then are IDs assigned. All source rows remain in
 the cleaned table, but drop rows are excluded from location checks and heads.
+Named crossings are checked at the mean of their active, valid direction points.
+Direction distances from that mean are checked separately. Address-style records
+and unverified fallbacks retain their individual nearest-road evidence.
 Persist cleaned.attrs['last_number'] between batches; the CLI stores it in JSON.
 """
 
@@ -22,7 +25,7 @@ from signal_qaqc.ids import assign_signal_ids
 from signal_qaqc.io import read_table
 from signal_qaqc.naming import check_intersection_name, make_key
 from signal_qaqc.report import exception, to_frame
-from signal_qaqc.spatial import associate, build_road_index
+from signal_qaqc.spatial import APPROACH_MAX_M, associate, build_road_index
 
 REQUIRED_FIELDS = [
     "location",
@@ -41,6 +44,10 @@ _MATCH_COLUMNS = [
     "match_road_key",
     "match_distance_m",
     "match_second_distance_m",
+    "match_scope",
+    "intersection_x",
+    "intersection_y",
+    "approach_distance_m",
 ]
 _DERIVED_COLUMNS = [
     "location_std",
@@ -98,6 +105,114 @@ def _duplicates(frame, valid_points, business_columns):
     return issues
 
 
+def _location_matches(frame, numeric, valid_points, road_index):
+    """Share named-crossing decisions, keeping direction-level outliers visible."""
+    rows = list(frame.itertuples(index=False))
+    points, groups, decisions = {}, {}, {}
+    for position, row in enumerate(rows):
+        if row.dup_role == "drop" or not valid_points.iloc[position]:
+            continue
+        point = Point(numeric.iloc[position]["x"], numeric.iloc[position]["y"])
+        points[position] = point
+        if row.name_status == "NOT_INTERSECTION" or not row.location_key:
+            decisions[position] = (
+                associate(point, row.location_std, road_index),
+                "record",
+                None,
+                None,
+            )
+        else:
+            groups.setdefault(row.location_key, []).append(position)
+
+    for positions in groups.values():
+        first = positions[0]
+        # Probe eligibility with the existing matcher. A fallback keeps its
+        # original per-record evidence and never receives a direction check.
+        probe = associate(points[first], rows[first].location_std, road_index)
+        if probe.method != "named_crossing":
+            decisions[first] = (probe, "record", None, None)
+            for position in positions[1:]:
+                match = associate(
+                    points[position], rows[position].location_std, road_index
+                )
+                decisions[position] = (match, "record", None, None)
+            continue
+        center = Point(
+            sum(points[position].x for position in positions) / len(positions),
+            sum(points[position].y for position in positions) / len(positions),
+        )
+        match = (
+            probe
+            if len(positions) == 1
+            else associate(center, rows[first].location_std, road_index)
+        )
+        for position in positions:
+            approach = points[position].distance(center) if len(positions) > 1 else None
+            decisions[position] = (match, "intersection", center, approach)
+
+    matches, issues = [], []
+    for position, row in enumerate(rows):
+        if row.dup_role == "drop":
+            matches.append([None] * len(_MATCH_COLUMNS))
+            continue
+        if not valid_points.iloc[position]:
+            invalid = [None] * len(_MATCH_COLUMNS)
+            invalid[1] = "invalid_point"
+            matches.append(invalid)
+            continue
+        match, scope, center, approach = decisions[position]
+        matches.append(
+            [
+                match.tier,
+                match.method,
+                match.road_id,
+                match.distance_m,
+                match.second_distance_m,
+                scope,
+                center.x if center is not None else None,
+                center.y if center is not None else None,
+                approach,
+            ]
+        )
+        if match.tier != "auto":
+            severity, action = (
+                ("warning", "review")
+                if match.tier == "flag"
+                else ("error", "send_to_field")
+            )
+            distance = (
+                f"{match.distance_m:.3f} m"
+                if isfinite(match.distance_m)
+                else "unavailable"
+            )
+            issues.append(
+                exception(
+                    row.signal_gid,
+                    "road_association",
+                    "x,y",
+                    severity,
+                    action,
+                    f"scope={scope}; {match.method}: {match.tier}; "
+                    f"distance={distance}; "
+                    f"candidate={match.road_id}",
+                )
+            )
+        if approach is not None and approach > APPROACH_MAX_M:
+            issues.append(
+                exception(
+                    row.signal_gid,
+                    "approach_distance",
+                    "x,y",
+                    "warning",
+                    "review",
+                    f"Direction point is {approach:.3f} m from the intersection mean "
+                    f"(limit {APPROACH_MAX_M:g} m); "
+                    "confirm travel direction or location.",
+                )
+            )
+    return matches, issues
+
+
 def run(signals, roads, delivered_heads=None, *, last_number=0):
     """Return (cleaned Signals, freshly derived heads, severity-sorted exceptions).
 
@@ -107,6 +222,9 @@ def run(signals, roads, delivered_heads=None, *, last_number=0):
     a CSV-shaped DataFrame with road_name/geometry_wkt in EPSG:26914 meters.
     Empty coordinates belong to required_field; downstream geometric rules skip
     them. A missing direction is reported but remains a safe empty grouping key.
+    Named intersections share one mean-point decision. match_scope identifies
+    that decision; intersection_x/y and approach_distance_m expose its evidence.
+    Single-record intersections have no direction-layer comparison.
     """
     missing = {"signal_gid", *REQUIRED_FIELDS} - set(signals.columns)
     if missing:
@@ -153,47 +271,10 @@ def run(signals, roads, delivered_heads=None, *, last_number=0):
     issues.extend(id_issues)
 
     road_index = _road_index(roads)
-    matches = []
-    for position, row in enumerate(frame.itertuples(index=False)):
-        if row.dup_role == "drop":
-            matches.append([None] * len(_MATCH_COLUMNS))
-            continue
-        if not valid_points.iloc[position]:
-            matches.append([None, "invalid_point", None, None, None])
-            continue
-        point = Point(numeric.iloc[position]["x"], numeric.iloc[position]["y"])
-        match = associate(point, row.location_std, road_index)
-        matches.append(
-            [
-                match.tier,
-                match.method,
-                match.road_id,
-                match.distance_m,
-                match.second_distance_m,
-            ]
-        )
-        if match.tier != "auto":
-            severity, action = (
-                ("warning", "review")
-                if match.tier == "flag"
-                else ("error", "send_to_field")
-            )
-            distance = (
-                f"{match.distance_m:.3f} m"
-                if isfinite(match.distance_m)
-                else "unavailable"
-            )
-            issues.append(
-                exception(
-                    row.signal_gid,
-                    "road_association",
-                    "x,y",
-                    severity,
-                    action,
-                    f"{match.method}: {match.tier}; distance={distance}; "
-                    f"candidate={match.road_id}",
-                )
-            )
+    matches, location_issues = _location_matches(
+        frame, numeric, valid_points, road_index
+    )
+    issues.extend(location_issues)
     for index, column in enumerate(_MATCH_COLUMNS):
         frame[column] = pd.array([match[index] for match in matches], dtype=object)
 

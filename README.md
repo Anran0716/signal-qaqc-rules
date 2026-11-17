@@ -18,7 +18,7 @@ project makes those decisions explicit and produces a consistent exception table
 | Intersection naming | Normalize `Major @ Minor` under the project hierarchy | Six statuses; fix safe formatting/order changes, review ambiguity |
 | Duplicate candidates | Canonical name + travel direction, attributes, and distance | Five classes; annotate keep/drop/review without deleting rows |
 | SignalID | Preserve valid unique IDs; assign after duplicate marking | Opaque `SIG-00001` IDs; persist the highest number to prevent reuse |
-| Location | Measure distance to the named roads' actual crossing | <=15 m auto; <=50 m flag; >50 m manual |
+| Location | Measure the intersection mean to the named crossing; check each direction's offset | <=15 m auto; <=50 m flag; >50 m manual; direction offset >60 m warning |
 | Heads | Discover all numbered head fields and reconcile delivery by parent/position | Report duplicate, missing, stale, orphan, dropped, or changed heads |
 
 Detailed behavior and assumptions are in [docs/RULES.md](docs/RULES.md).
@@ -28,7 +28,8 @@ Detailed behavior and assumptions are in [docs/RULES.md](docs/RULES.md).
 - Naming returns six states because incorrect, out-of-scope, and undecidable
   names need different actions.
 - Location matching uses the named crossing, tries route aliases, and selects
-  the nearest actual intersection point. Unverified fallbacks cannot auto-pass.
+  the nearest actual intersection point. Named intersections use active points'
+  mean positions, with a separate direction-outlier check. Unverified fallbacks cannot auto-pass.
   Paired tests retain strict expected failures for the nearest-road v1 baseline.
 - A repeated key can represent distinct signals. Only exact duplicates are
   marked drop; source rows remain available for review.

@@ -26,6 +26,12 @@ directory. Inputs remain untouched. The cleaned table retains drop-labeled
 records; heads and location checks exclude those records. Exceptions are sorted
 error, warning, info and include the matching method for location problems.
 
+For named crossings, `match_scope=intersection` means that `match_distance_m`
+belongs to the active points' mean, stored in `intersection_x/y`. The original
+coordinates are preserved. `approach_distance_m` measures each direction's
+offset from that mean; offsets above 60 m receive a separate warning. Singletons
+have no direction comparison. Fallbacks and beacons use `match_scope=record`.
+
 Rules run in this order: original required answers and coordinates, standardized
 names/keys, duplicate marking, SignalID allocation, location matching, then head
 derivation and optional delivery reconciliation. Unusable points are left for

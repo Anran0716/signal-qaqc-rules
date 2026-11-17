@@ -161,6 +161,25 @@ auto capped at flag because the claimed crossing has not been verified.
 `NOT_INTERSECTION` records use `nearest_v1` directly and can retain auto. The
 `RoadMatch.method` records `named_crossing`, `fallback_v1`, or `nearest_v1`.
 
+### Intersection and direction decisions
+
+The pipeline groups valid active records by `location_key` for named crossings.
+It averages their local XY positions, runs `associate` at that mean, and shares
+the result with each member. The 15/50 m tiers describe this intersection mean.
+Drop rows and invalid points do not enter the mean. Source coordinates remain
+unchanged. A singleton is its own mean and has no direction comparison.
+
+For groups with multiple active points, measure each original direction point's
+distance to the mean. Distances above `APPROACH_MAX_M = 60.0` produce a separate
+`approach_distance` warning, even if the shared crossing decision is auto or flag.
+This prevents a distant direction point from being hidden by averaging.
+
+`match_scope` is `intersection` for these shared decisions and `record` for
+individual checks. `intersection_x`, `intersection_y`, and `approach_distance_m`
+expose the evidence. Unverified fallbacks and `NOT_INTERSECTION` records retain
+individual road checks and do not get direction-layer warnings. Same-name road
+segment merging, alias selection, and no-crossing error policy remain unchanged.
+
 ## Input answers, required fields, and XY
 
 `read_table` disables pandas' default NA tokens and treats only empty CSV cells

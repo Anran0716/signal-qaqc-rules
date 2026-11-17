@@ -11,6 +11,12 @@ does not measure the distance of the intersection's mean point.
 The measurements and input/code fingerprints remain in local private baseline
 artifacts. The original baseline is retained separately from its extension.
 
+Named-crossing decisions now use the intersection mean under the existing
+distance tiers. Each direction remains visible through a separate distance from
+that mean; the provisional approach limit is 60 m. Exclude drop rows and invalid
+points, omit direction checks for singletons, and retain record-level checks for
+beacons and unverified fallbacks. The mean does not repair source coordinates.
+
 ## Route names can hide local aliases
 
 The preparation script names state-route segments using `HSYS` and `HNUM` only.

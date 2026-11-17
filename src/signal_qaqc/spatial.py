@@ -26,6 +26,7 @@ from signal_qaqc.naming import (
 
 AUTO_MAX_M = 15.0
 FLAG_MAX_M = 50.0
+APPROACH_MAX_M = 60.0
 AMBIGUITY_GAP_M = 10.0
 
 
