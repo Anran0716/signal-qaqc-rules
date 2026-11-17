@@ -26,7 +26,7 @@ from signal_qaqc.ids import assign_signal_ids
 from signal_qaqc.io import read_table
 from signal_qaqc.naming import check_intersection_name, make_key
 from signal_qaqc.report import exception, to_frame
-from signal_qaqc.spatial import APPROACH_MAX_M, associate, build_road_index
+from signal_qaqc.spatial import APPROACH_MAX_M, GAP_MAX_M, associate, build_road_index
 
 REQUIRED_FIELDS = [
     "location",
@@ -53,6 +53,8 @@ _MATCH_COLUMNS = [
     "match_road_b",
     "match_reason",
     "match_gap_m",
+    "match_road_a_distance_m",
+    "match_road_b_distance_m",
 ]
 _DERIVED_COLUMNS = [
     "location_std",
@@ -182,6 +184,8 @@ def _location_matches(frame, numeric, valid_points, road_index):
                 match.road_keys[1] if match.road_keys else None,
                 match.reason,
                 match.gap_m,
+                match.road_distances_m[0] if match.road_distances_m else None,
+                match.road_distances_m[1] if match.road_distances_m else None,
             ]
         )
         if match.tier != "auto":
@@ -203,11 +207,21 @@ def _location_matches(frame, numeric, valid_points, road_index):
             )
             if match.method == "road_gap":
                 rule, field = "road_gap", "location_std"
-                severity, action = "warning", "review_in_office"
+                if match.tier == "flag":
+                    action = "review_in_office"
                 detail = (
-                    f"scope={scope}; road layer {match.road_keys} does not intersect; "
-                    f"nearest road gap={match.gap_m:.3f} m. "
-                    "Review the road network in the office."
+                    f"scope={scope}; roads={match.road_keys} do not intersect locally; "
+                    f"reason={match.reason}; road gap={match.gap_m:.3f} m; "
+                    f"point-to-road A={match.road_distances_m[0]:.3f} m; "
+                    f"point-to-road B={match.road_distances_m[1]:.3f} m; "
+                    f"gap/proximity limit={GAP_MAX_M:g} m. "
+                    + (
+                        "Review the road network and road identity in the office."
+                        if match.tier == "flag"
+                        else "Large separation or distant point; "
+                        "verify signal location and road identity "
+                        "before accepting the record."
+                    )
                 )
             elif match.reason == "same_road_on_both_sides":
                 rule, field = "intersection_name", "location_std"

@@ -7,6 +7,8 @@ from signal_qaqc.naming import make_key
 from signal_qaqc.spatial import (
     AUTO_MAX_M,
     FLAG_MAX_M,
+    GAP_MAX_M,
+    _gap_tier,
     _nearest_tier,
     _side_keys,
     associate,
@@ -225,14 +227,15 @@ def test_associate_uses_the_shared_distance_tiers(roads, offset, expected):
     assert result.tier == expected
 
 
-def test_two_known_parallel_roads_are_a_road_gap_without_v1_fallback(roads):
+def test_widely_separated_known_roads_require_manual_review_without_v1_fallback(roads):
     result = associate(Point(500_100, 3_300_005), "IH 10 @ US 90", roads)
 
-    assert result.tier == "flag"
+    assert result.tier == "manual"
     assert result.distance_m == inf
     assert result.method == "road_gap"
     assert result.gap_m == pytest.approx(100)
     assert result.road_keys == ("IH10", "US90")
+    assert result.reason == "named_roads_far_apart"
 
 
 @pytest.mark.parametrize(
@@ -522,8 +525,21 @@ def test_a_road_cannot_be_its_own_claimed_intersection(roads):
     assert result.gap_m is None
 
 
-@pytest.mark.parametrize("gap", [30, 125])
-def test_parallel_road_gaps_are_office_flags_even_above_location_distance_limits(gap):
+@pytest.mark.parametrize(
+    ("gap", "point_offset", "tier", "reason"),
+    [
+        pytest.param(
+            30, 0, "flag", "no_crossing_in_search_radius", id="small_local_gap"
+        ),
+        pytest.param(500, 0, "manual", "named_roads_far_apart", id="large_gap"),
+        pytest.param(
+            30, -300, "manual", "named_roads_far_apart", id="point_far_from_small_gap"
+        ),
+    ],
+)
+def test_disjoint_roads_require_a_small_gap_and_proximity_to_both_roads(
+    gap, point_offset, tier, reason
+):
     x, y = 500_000.0, 3_300_000.0
     index = build_road_index(
         {
@@ -532,12 +548,51 @@ def test_parallel_road_gaps_are_office_flags_even_above_location_distance_limits
         }
     )
 
-    result = associate(Point(x, y), "IH 100 @ FM 200", index)
+    result = associate(Point(x, y + point_offset), "IH 100 @ FM 200", index)
 
     assert result.method == "road_gap"
-    assert result.tier == "flag"
+    assert result.tier == tier
+    assert result.reason == reason
     assert result.gap_m == pytest.approx(gap)
     assert result.distance_m == inf
+    assert result.road_distances_m == pytest.approx(
+        (abs(point_offset), abs(gap - point_offset))
+    )
+
+
+@pytest.mark.parametrize(
+    ("gap", "first", "second", "tier"),
+    [
+        (50.0, 50.0, 50.0, "flag"),
+        (50.0001, 0.0, 50.0, "manual"),
+        (30.0, 50.0001, 20.0, "manual"),
+        (30.0, 20.0, 50.0001, "manual"),
+    ],
+)
+def test_gap_and_both_point_distances_have_exact_numeric_limits(
+    gap, first, second, tier
+):
+    assert GAP_MAX_M == 50.0
+    assert _gap_tier(gap, (first, second)) == tier
+
+
+def test_a_small_nearby_alias_gap_wins_over_a_smaller_distant_route_gap():
+    x, y = 500_000.0, 3_300_000.0
+    index = build_road_index(
+        {
+            "IH 100": LineString([(x - 100, y + 300), (x + 100, y + 300)]),
+            "FM 200": LineString([(x - 100, y + 305), (x + 100, y + 305)]),
+            "OAK RD": LineString([(x - 100, y), (x + 100, y)]),
+            "ELM RD": LineString([(x - 100, y + 30), (x + 100, y + 30)]),
+        }
+    )
+
+    result = associate(Point(x, y), "IH 100 / OAK RD @ FM 200 / ELM RD", index)
+
+    assert result.tier == "flag"
+    assert result.road_keys == ("OAKRD", "ELMRD")
+    assert result.gap_m == pytest.approx(30)
+    assert result.road_distances_m == pytest.approx((0, 30))
 
 
 def test_digitizing_break_is_a_road_gap():

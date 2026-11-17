@@ -5,7 +5,8 @@ wrong-crossing failures. Associate measures the nearest point on the named roads
 actual intersection, including multiple crossings and overlapping line segments.
 Named roads are clipped to a local search window before intersecting them. All
 distinct candidate pairs are compared; route/alias priority breaks exact ties.
-Nearby distinct roads without an intersection produce an office-review road_gap.
+Disjoint roads get an office-review flag only when their gap and both distances
+from the query point are <=GAP_MAX_M; otherwise they require manual review.
 Unverified fallbacks are capped at flag and marked fallback_v1. NOT_INTERSECTION
 records use nearest_v1 directly because their location is defined along a road.
 Build the road index once with build_road_index before processing signal records.
@@ -28,6 +29,7 @@ from signal_qaqc.naming import (
 
 AUTO_MAX_M = 15.0
 FLAG_MAX_M = 50.0
+GAP_MAX_M = 50.0
 APPROACH_MAX_M = 60.0
 SEARCH_RADIUS_M = 2_000.0
 AMBIGUITY_GAP_M = 10.0
@@ -41,7 +43,9 @@ class RoadMatch:
     method is named_crossing, road_gap, fallback_v1, or nearest_v1.
     road_keys records the actual selected pair, including aliases. reason explains
     a named match without a local crossing. gap_m measures road-layer separation,
-    independently of the signal-to-crossing distance.
+    independently of the signal-to-crossing distance. For disjoint roads,
+    road_distances_m stores query-point distances in the same order as road_keys.
+    A road_gap method can be flag or manual; only small, nearby gaps get a flag.
     """
 
     road_id: str | None
@@ -52,6 +56,7 @@ class RoadMatch:
     road_keys: tuple[str, str] | None = None
     reason: str | None = None
     gap_m: float | None = None
+    road_distances_m: tuple[float, float] | None = None
 
 
 def classify_distance(distance_m: float) -> str:
@@ -68,6 +73,13 @@ def _nearest_tier(distance_m: float, second_distance_m: float) -> str:
     if tier == "auto" and second_distance_m - distance_m < AMBIGUITY_GAP_M:
         return "flag"
     return tier
+
+
+def _gap_tier(gap_m: float, road_distances_m: tuple[float, float]) -> str:
+    """Office review requires a small gap and proximity to both named roads."""
+    if gap_m <= GAP_MAX_M and all(value <= GAP_MAX_M for value in road_distances_m):
+        return "flag"
+    return "manual"
 
 
 def _validate_point(point):
@@ -181,8 +193,10 @@ def associate(
     Compare every distinct pair and select the nearest actual crossing. Exact
     ties retain route/alias priority. Record the selected keys for audit.
     Missing/unparseable names or unavailable roads use fallback_v1, capped at flag.
-    Distinct nearby roads without a crossing return road_gap with a minimum gap;
-    gap length does not use the signal-to-crossing location thresholds.
+    Without a crossing, prefer a gap <=GAP_MAX_M with both query-to-road distances
+    <=GAP_MAX_M, then the smallest gap. Such a pair gets road_gap/flag; otherwise
+    return road_gap/manual with reason named_roads_far_apart. Keep all three
+    distances as evidence. A real crossing always takes precedence over a gap.
     NOT_INTERSECTION records use nearest_v1 directly and may retain auto.
     MultiPoint and line intersections use their actual nearest point to the signal.
     """
@@ -219,16 +233,25 @@ def associate(
         hit = nearby[first].intersection(nearby[second])
         if hit.is_empty:
             gap = nearby[first].distance(nearby[second])
-            if best_gap is None or gap < best_gap.gap_m:
+            road_distances = (
+                point.distance(nearby[first]),
+                point.distance(nearby[second]),
+            )
+            tier = _gap_tier(gap, road_distances)
+            rank = (tier != "flag", gap)
+            if best_gap is None or rank < (best_gap.tier != "flag", best_gap.gap_m):
                 best_gap = RoadMatch(
                     make_key(name.proposed),
                     inf,
                     inf,
-                    "flag",
+                    tier,
                     method="road_gap",
                     road_keys=(first, second),
-                    reason="no_crossing_in_search_radius",
+                    reason="no_crossing_in_search_radius"
+                    if tier == "flag"
+                    else "named_roads_far_apart",
                     gap_m=gap,
+                    road_distances_m=road_distances,
                 )
             continue
         # A boundary clip can be a Point/GeometryCollection, not only a line.

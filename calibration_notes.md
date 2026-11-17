@@ -35,11 +35,14 @@ local roads/crossings are identified explicitly and handled separately below.
 
 ## Missing crossing evidence and office review
 
-When two distinct named roads are present locally but do not intersect, report
-`road_gap` as a flag, measure their minimum separation, and recommend
-`review_in_office`. The gap is road-layer evidence, not a signal-position error
-or a replacement for signal-to-crossing distance. Office review must check names
-and topology before deciding whether the point needs field verification.
+When two distinct named roads are present locally but do not intersect, measure
+their gap and both query-point distances. Only when all three are at most
+`GAP_MAX_M = 50.0` does `road_gap` receive flag / `review_in_office`. Otherwise
+retain manual / error / `send_to_field`, with reason `named_roads_far_apart`.
+Reports and cleaned output preserve all three measurements. The absent crossing
+must not downgrade a large separation or a distant point. The gap remains
+separate from the undefined signal-to-crossing distance; review must check road
+identity and topology as well as signal location.
 
 If a named road is missing locally, retain the per-record nearest-road fallback,
 capped so it cannot auto-pass. A same-key result on both sides is kept as a

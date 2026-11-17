@@ -37,8 +37,12 @@ intersection mean. `match_road_a/b` identify the selected named-road pair, and
 clips roads to the initial 2000 m search window and compares up to nine pairs.
 
 `road_gap` means two distinct nearby roads do not intersect. `match_gap_m` is
-their minimum separation; `match_distance_m` is undefined for that case. The
-exception is warning / `review_in_office`, including road keys and the gap.
+their minimum separation; `match_distance_m` is undefined for that case.
+`match_road_a_distance_m` and `match_road_b_distance_m` measure the query point
+(the group mean or individual point) to each selected road. Only when the gap
+and both distances are <=`GAP_MAX_M = 50.0` is the exception warning /
+`review_in_office`. Otherwise it is manual / error / `send_to_field`, with
+`match_reason=named_roads_far_apart`. Reports include all three distances.
 These groups retain intersection means and direction-outlier checks. Missing
 roads use the capped per-record fallback. Same-key sides carry a separate
 naming-review reason and an office-review action.

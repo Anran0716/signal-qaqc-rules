@@ -201,7 +201,8 @@ def pipeline_metrics(cleaned, heads, issues, roads):
     fallback = participants.loc[participants["match_method"].eq("fallback_v1")]
     location_errors = set(
         issues.loc[
-            issues["rule"].eq("road_association") & issues["severity"].eq("error"),
+            issues["rule"].isin(["road_association", "road_gap"])
+            & issues["severity"].eq("error"),
             "record_id",
         ]
     )
@@ -250,6 +251,14 @@ def pipeline_metrics(cleaned, heads, issues, roads):
             "road_gap_intersections": int(road_gaps["location_key"].nunique()),
             "road_gap_all_office_review": set(road_gaps["signal_gid"])
             <= office_gap_reviews,
+            "road_gap_flags_all_office_review": set(
+                road_gaps.loc[road_gaps["match_tier"].eq("flag"), "signal_gid"]
+            )
+            <= office_gap_reviews,
+            "road_gap_manual_all_error": set(
+                road_gaps.loc[road_gaps["match_tier"].eq("manual"), "signal_gid"]
+            )
+            <= location_errors,
             "road_gap_distance_median_m": round(float(gap_distances.median()), 1)
             if len(gap_distances)
             else None,

@@ -95,8 +95,19 @@ def test_baseline_comparison_reports_differences_without_approximating_counts(pr
     ) == [{"metric": "matching.auto", "expected": 3, "actual": 2}]
 
 
+@pytest.mark.parametrize(
+    ("gap", "tier", "severity", "action"),
+    [
+        (30, "flag", "warning", "review_in_office"),
+        (1_000, "manual", "error", "send_to_field"),
+    ],
+)
 def test_distance_baseline_counts_directions_and_excludes_fallbacks_and_no_crossing(
     prep,
+    gap,
+    tier,
+    severity,
+    action,
 ):
     cleaned = pd.DataFrame(
         {
@@ -110,7 +121,7 @@ def test_distance_baseline_counts_directions_and_excludes_fallbacks_and_no_cross
             "dup_role": ["keep", "review", "review", "keep", "drop"],
             "dup_class": [""] * 5,
             "name_status": ["OK"] * 5,
-            "match_tier": ["auto", "flag", "flag", "flag", None],
+            "match_tier": ["auto", "flag", tier, "flag", None],
             "match_method": [
                 "named_crossing",
                 "named_crossing",
@@ -119,7 +130,7 @@ def test_distance_baseline_counts_directions_and_excludes_fallbacks_and_no_cross
                 None,
             ],
             "match_distance_m": [12, 18, float("inf"), 1, None],
-            "match_gap_m": [None, None, 1_000, None, None],
+            "match_gap_m": [None, None, gap, None, None],
             "location_key": [
                 "IH10@FM100",
                 "IH10@FM100",
@@ -143,8 +154,8 @@ def test_distance_baseline_counts_directions_and_excludes_fallbacks_and_no_cross
             {
                 "record_id": "fictional-c",
                 "rule": "road_gap",
-                "severity": "warning",
-                "action": "review_in_office",
+                "severity": severity,
+                "action": action,
             }
         ]
     )
@@ -152,7 +163,7 @@ def test_distance_baseline_counts_directions_and_excludes_fallbacks_and_no_cross
     roads = {
         "IH 10": LineString([(499_500, 3_300_000), (500_500, 3_300_000)]),
         "FM 100": LineString([(500_000, 3_299_500), (500_000, 3_301_500)]),
-        "US 100": LineString([(499_500, 3_301_000), (500_500, 3_301_000)]),
+        "US 100": LineString([(499_500, 3_300_000 + gap), (500_500, 3_300_000 + gap)]),
     }
     metrics = prep["pipeline_metrics"](cleaned, pd.DataFrame(), issues, roads)[
         "matching"
@@ -162,10 +173,13 @@ def test_distance_baseline_counts_directions_and_excludes_fallbacks_and_no_cross
     assert metrics["named_crossing_distance_median_m"] == 15.0
     assert metrics["no_crossing_records"] == 1
     assert metrics["no_crossing_intersections"] == 1
-    assert not metrics["no_crossing_all_error"]
-    assert metrics["no_crossing_all_office_review"]
+    assert metrics["no_crossing_all_error"] == (tier == "manual")
+    assert metrics["no_crossing_all_office_review"] == (tier == "flag")
     assert metrics["road_gap_records"] == 1
-    assert metrics["road_gap_distance_median_m"] == 1_000
+    assert metrics["road_gap_distance_median_m"] == gap
+    assert metrics["road_gap_all_office_review"] == (tier == "flag")
+    assert metrics["road_gap_flags_all_office_review"]
+    assert metrics["road_gap_manual_all_error"]
     assert metrics["fallback_v1_records"] == 1
     assert metrics["fallback_v1_all_flag"]
     assert metrics["named_intersection_count"] == 2

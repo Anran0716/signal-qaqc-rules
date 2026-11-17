@@ -204,23 +204,42 @@ def test_selected_alias_pair_is_visible_in_rows_and_exception_details():
     assert "OAKRD" in detail and "ELMRD" in detail
 
 
-def test_road_gap_exception_requests_office_review_and_includes_gap_evidence():
+@pytest.mark.parametrize(
+    ("gap", "point_offset", "tier", "reason", "severity", "action"),
+    [
+        (30, 0, "flag", "no_crossing_in_search_radius", "warning", "review_in_office"),
+        (500, 0, "manual", "named_roads_far_apart", "error", "send_to_field"),
+        (30, -300, "manual", "named_roads_far_apart", "error", "send_to_field"),
+    ],
+)
+def test_road_gap_exception_uses_tier_and_exposes_all_three_distances(
+    gap, point_offset, tier, reason, severity, action
+):
     roads = {
         "IH 10": LineString([(X - 500, Y), (X + 500, Y)]),
-        "FM 100": LineString([(X - 500, Y + 30), (X + 500, Y + 30)]),
+        "FM 100": LineString([(X - 500, Y + gap), (X + 500, Y + gap)]),
     }
 
-    cleaned, _, issues = run(signals_at([(0, 0)]), roads)
+    cleaned, _, issues = run(signals_at([(0, point_offset)]), roads)
 
     assert cleaned.loc[0, "match_method"] == "road_gap"
-    assert cleaned.loc[0, "match_tier"] == "flag"
+    assert cleaned.loc[0, "match_tier"] == tier
     assert cleaned.loc[0, "match_scope"] == "intersection"
-    assert cleaned.loc[0, "match_gap_m"] == pytest.approx(30)
+    assert cleaned.loc[0, "match_gap_m"] == pytest.approx(gap)
+    assert cleaned.loc[0, "match_reason"] == reason
+    assert cleaned.loc[0, "match_road_a_distance_m"] == pytest.approx(abs(point_offset))
+    assert cleaned.loc[0, "match_road_b_distance_m"] == pytest.approx(
+        abs(gap - point_offset)
+    )
     assert issues["rule"].tolist() == ["road_gap"]
-    assert issues["severity"].tolist() == ["warning"]
-    assert issues["action"].tolist() == ["review_in_office"]
-    assert "30.000 m" in issues.loc[0, "detail"]
-    assert "IH10" in issues.loc[0, "detail"] and "FM100" in issues.loc[0, "detail"]
+    assert issues["severity"].tolist() == [severity]
+    assert issues["action"].tolist() == [action]
+    detail = issues.loc[0, "detail"]
+    assert f"road gap={gap:.3f} m" in detail
+    assert f"point-to-road A={abs(point_offset):.3f} m" in detail
+    assert f"point-to-road B={abs(gap - point_offset):.3f} m" in detail
+    assert "IH10" in detail and "FM100" in detail
+    assert reason in detail
 
 
 def test_road_gap_groups_retain_direction_outlier_checks():

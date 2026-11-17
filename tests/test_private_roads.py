@@ -12,7 +12,7 @@ import pytest
 from signal_qaqc.adapt import adapt
 from signal_qaqc.io import read_table
 from signal_qaqc.pipeline import run
-from signal_qaqc.spatial import SEARCH_RADIUS_M
+from signal_qaqc.spatial import GAP_MAX_M, SEARCH_RADIUS_M
 
 PRIVATE = Path(__file__).resolve().parents[1] / "data/private"
 SNAPSHOT = PRIVATE / "signals_delivered_2025.csv"
@@ -59,12 +59,29 @@ def test_every_participating_record_has_a_match_decision():
     assert local["match_road_a"].ne(local["match_road_b"]).all()
     assert named.loc[~finite, "match_reason"].notna().all()
     gaps = participating.loc[participating["match_method"].eq("road_gap")]
-    assert gaps["match_tier"].eq("flag").all()
-    assert gaps[["match_road_a", "match_road_b", "match_gap_m"]].notna().all().all()
+    evidence_columns = [
+        "match_gap_m",
+        "match_road_a_distance_m",
+        "match_road_b_distance_m",
+    ]
+    assert gaps[["match_road_a", "match_road_b", *evidence_columns]].notna().all().all()
     assert gaps["match_road_a"].ne(gaps["match_road_b"]).all()
-    assert gaps["match_gap_m"].astype(float).map(isfinite).all()
-    assert gaps["match_gap_m"].astype(float).ge(0).all()
+    evidence = gaps[evidence_columns].astype(float)
+    assert evidence.apply(lambda column: column.map(isfinite)).all().all()
+    assert evidence.ge(0).all().all()
+    small_nearby = evidence.le(GAP_MAX_M).all(axis=1)
+    assert gaps.loc[small_nearby, "match_tier"].eq("flag").all()
+    assert gaps.loc[~small_nearby, "match_tier"].eq("manual").all()
+    assert gaps.loc[~small_nearby, "match_reason"].eq("named_roads_far_apart").all()
     gap_issues = issues.loc[issues["rule"].eq("road_gap")]
-    assert gap_issues["severity"].eq("warning").all()
-    assert gap_issues["action"].eq("review_in_office").all()
     assert set(gaps["signal_gid"]) == set(gap_issues["record_id"])
+    office = gap_issues.loc[
+        gap_issues["record_id"].isin(gaps.loc[small_nearby, "signal_gid"])
+    ]
+    manual = gap_issues.loc[
+        gap_issues["record_id"].isin(gaps.loc[~small_nearby, "signal_gid"])
+    ]
+    assert office["severity"].eq("warning").all()
+    assert office["action"].eq("review_in_office").all()
+    assert manual["severity"].eq("error").all()
+    assert manual["action"].eq("send_to_field").all()

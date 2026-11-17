@@ -160,11 +160,22 @@ crossing across all pairs; route/alias priority breaks exact distance ties.
 `RoadMatch.road_keys` stores the actual selected pair. The cleaned table exposes
 `match_road_a` and `match_road_b`, and location exceptions include those keys.
 `match_reason` explains missing local evidence. If both distinct roads exist
-locally but no pair intersects, return `tier=flag`, `method=road_gap`, and the
-minimum road-to-road separation in `RoadMatch.gap_m` / `match_gap_m`. Exceptions
-use rule `road_gap`, severity warning, and action `review_in_office`, with the
-selected road keys and measured gap. The signal-to-crossing distance remains
-undefined; road-gap lengths do not use the 15/50 m location tiers.
+locally but no pair intersects, retain `method=road_gap` and measure the minimum
+road-to-road separation and the query point's distance to each road. Only when
+all three distances are <=`GAP_MAX_M = 50.0` does the result become flag / warning /
+`review_in_office`. Otherwise it is manual / error / `send_to_field`, with reason
+`named_roads_far_apart`; no missing crossing can conceal a large separation or a
+point far from the roads. A real crossing takes precedence; absent a crossing,
+prefer an eligible small nearby gap, then the smallest gap with route/alias order
+breaking exact ties.
+
+`RoadMatch.gap_m` / `match_gap_m` stores the gap; `road_distances_m` stores query
+distances in road-key order, exposed as `match_road_a_distance_m` and
+`match_road_b_distance_m`. Rule `road_gap` exceptions include all three distances
+and the reason at either tier. The query point is the intersection mean for a
+group and the original point for an individual decision. The signal-to-crossing
+distance remains undefined when there is no crossing; it is not replaced by the
+gap or either point-to-road distance.
 
 If either named road is missing in the index or local window, use `fallback_v1`.
 The fallback caps auto at flag and retains manual when nearest-road evidence
