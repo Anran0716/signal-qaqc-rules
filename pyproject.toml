@@ -9,9 +9,9 @@ description = "Quality assurance and quality control rules for traffic signal in
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "pandas",
-    "pyproj",
-    "shapely",
+    "pandas>=2.0",
+    "pyproj>=3.0",
+    "shapely>=2.0",
 ]
 
 [project.optional-dependencies]

@@ -15,7 +15,7 @@ def to_local(lon, lat):
     return _TRANSFORMER.transform(lon, lat, errcheck=True)
 
 
-def to_latlon(x, y):
+def to_lonlat(x, y):
     """Convert local (x, y) meters back to WGS84 (longitude, latitude) degrees."""
     return _TRANSFORMER.transform(
         x, y, direction=TransformDirection.INVERSE, errcheck=True

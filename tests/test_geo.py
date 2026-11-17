@@ -1,6 +1,6 @@
 import pytest
 
-from signal_qaqc.geo import to_latlon, to_local
+from signal_qaqc.geo import to_local, to_lonlat
 
 
 @pytest.mark.parametrize(
@@ -11,10 +11,10 @@ from signal_qaqc.geo import to_latlon, to_local
         pytest.param(-97.9647, 29.5688, id="seguin"),
     ],
 )
-def test_local_and_latlon_round_trip_preserves_coordinates(lon, lat):
+def test_local_and_lonlat_round_trip_preserves_coordinates(lon, lat):
     x, y = to_local(lon, lat)
 
-    assert to_latlon(x, y) == pytest.approx((lon, lat), rel=0, abs=1e-8)
+    assert to_lonlat(x, y) == pytest.approx((lon, lat), rel=0, abs=1e-8)
 
 
 def test_to_local_uses_utm_zone_14_meter_coordinates():
